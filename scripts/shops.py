@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
 店铺管理模块 - 查询和展示绑定店铺
+
+Usage:
+    python3 shops.py
 """
 
+import json
+import os
+import sys
 from typing import List
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from api import list_bound_shops, Shop
 
 
@@ -65,3 +73,27 @@ def check_shop_status() -> dict:
         "expired": expired_shops,
         "markdown": format_shop_list(all_shops)
     }
+
+
+if __name__ == "__main__":
+    try:
+        status = check_shop_status()
+        output = {
+            "total": len(status["all"]),
+            "valid_count": len(status["valid"]),
+            "expired_count": len(status["expired"]),
+            "shops": [
+                {"code": s.code, "name": s.name, "channel": s.channel, "is_authorized": s.is_authorized}
+                for s in status["all"]
+            ],
+            "markdown": status["markdown"],
+        }
+    except Exception as e:
+        output = {
+            "total": 0,
+            "valid_count": 0,
+            "expired_count": 0,
+            "shops": [],
+            "markdown": f"查询店铺失败（网络异常，已重试3次）：{e}",
+        }
+    print(json.dumps(output, ensure_ascii=False, indent=2))

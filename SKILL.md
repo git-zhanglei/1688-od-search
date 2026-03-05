@@ -5,17 +5,7 @@ description: |
   1688选品与铺货专家技能。掌握1688平台商品搜索、店铺管理、下游铺货的完整链路。
   具备用户引导能力：识别新手/成熟用户，提供差异化的AK配置、开店指导、选品建议、铺货操作服务。
   熟悉各下游平台（抖音、拼多多、小红书、淘宝）的铺货特点和常见问题。
-metadata:
-  emoji: "🛒"
-  requires:
-    env: ["ALI_1688_AK"]
-    bins: ["python3"]
-  primaryEnv: "ALI_1688_AK"
-  expertise:
-    - 1688平台商品搜索
-    - 下游渠道铺货（抖店/拼多多/小红书/淘宝）
-    - 电商选品策略
-    - 用户分层引导
+metadata: {"openclaw": {"emoji": "🛒", "requires": {"env": ["ALI_1688_AK"], "bins": ["python3"]}, "primaryEnv": "ALI_1688_AK"}}
 ---
 
 # 1688 选品铺货专家
@@ -24,22 +14,23 @@ metadata:
 
 ## 目录
 
-- [核心能力](#核心能力)
-- [快速开始](#快速开始)
-- [使用模式](#使用模式)
-- [API参考](#api参考)
-- [常见问题](#常见问题)
+- [一、核心能力](#一核心能力)
+- [二、知识体系](#二知识体系)
+- [三、使用模式](#三使用模式何时调用本技能)
+- [四、API 使用参考](#四api-使用参考)
+- [五、最佳实践](#五最佳实践)
+- [六、边界与限制](#六边界与限制)
 
 ---
 
-## 核心能力
+## 一、核心能力
 
 本技能掌握以下专业能力：
 
 ### 1.1 商品搜索（选品）
-- **自然语言理解**：从用户描述中提取关键词、价格区间、品类偏好
-- **多维度筛选**：支持按渠道、类目、数量筛选
-- **结果格式化**：将API返回转换为易读的商品列表
+- **自然语言理解**：用户的自然语言描述直接作为 query 传给 API，API 自行理解
+- **丰富数据分析**：API 返回每个商品的 stats 数据，包括销量趋势、复购率、好评率、量价关系等，Agent 可据此给出选品建议
+- **结果格式化**：将 API 返回转换为含关键指标的商品列表，同时输出原始 stats 数据供深度分析
 
 ### 1.2 店铺管理
 - **绑定店铺查询**：获取用户已绑定的下游店铺列表
@@ -82,14 +73,11 @@ AK（Access Key）是访问 1688 平台的身份凭证。
 ```
 
 我会立即：
-1. ✅ 保存 AK 到配置文件（持久化）
-2. ✅ 设置当前会话环境变量（立即生效）
-3. 🔄 **尝试继续你的选品/铺货请求**
+1. ✅ 通过 `configure.py` 保存 AK 到配置文件（持久化）
+2. ✅ 在当前会话的后续命令中手动注入 AK（`ALI_1688_AK=xxx python3 ...`）
+3. 🔄 **继续你的选品/铺货请求**
 
-如果当前会话能正常使用，你会看到结果；
-如果遇到权限错误，我会提示你重启 Gateway。
-
-**重启后**，所有新会话都能自动使用此 AK，无需再次配置。
+当前会话即可看到结果。**重启 Gateway 后**，所有新会话自动注入，无需再手动传递。
 
 **方式二：手动配置 openclaw.json**
 
@@ -98,8 +86,14 @@ AK（Access Key）是访问 1688 平台的身份凭证。
 ```json5
 {
   // ... 其他配置
-  env: {
-    ALI_1688_AK: "your_ak_here"
+  skills: {
+    entries: {
+      "1688-skills": {
+        env: {
+          ALI_1688_AK: "your_ak_here"
+        }
+      }
+    }
   }
 }
 ```
@@ -109,8 +103,8 @@ AK（Access Key）是访问 1688 平台的身份凭证。
 **方式三：使用配置脚本**
 
 ```bash
-cd ~/.openclaw/skills/1688-od-search/scripts
-python configure.py your_ak_here
+cd {baseDir}/scripts
+python3 configure.py your_ak_here
 ```
 
 **方式四：Gateway 启动参数**
@@ -123,7 +117,7 @@ export ALI_1688_AK=your_ak_here
 source ~/.zshrc
 ```
 
-⚠️ **注意**：方式三只对从当前 shell 启动的 Gateway 有效。如果 Gateway 作为系统服务运行（LaunchAgent/systemd），需要使用方式一或二。
+⚠️ **注意**：方式四（export）只对从当前 shell 启动的 Gateway 有效。如果 Gateway 作为系统服务运行（LaunchAgent/systemd），请使用方式一、二或三。
 
 #### 安全提示
 
@@ -142,17 +136,20 @@ source ~/.zshrc
 
 ### 2.3 选品策略
 
-#### 好卖商品的特征
+#### 好卖商品的特征（结合 stats 数据判断）
 1. **应季性**：当前季节需要的商品（如夏天卖风扇）
-2. **差异化**：与竞品有明显区别（功能/外观/价格）
-3. **供应链稳定**：1688店铺评分高，发货快
-4. **利润空间**：采购价与售价之间有足够毛利
+2. **销量验证**：`last30DaysSales` 高且 `saleQuantityList` 趋势向上
+3. **供应链稳定**：`collectionRate24h` 高（发货快）、`totalOrder` 大
+4. **质量可靠**：`goodRates` 高、`repurchaseRate` 高、`remarkCnt` 多
+5. **竞争空间**：`downstreamOffer` 不宜过高（同行铺货少 = 蓝海）
+6. **利润空间**：通过 `tradePriceList` 分析成交价区间，评估定价空间
 
 #### 避坑指南
 - ❌ 避免侵权商品（品牌仿品）
 - ❌ 避免过重/过大商品（运费成本高）
 - ❌ 避免保质期短的食品
-- ❌ 避免售后率高的电子产品
+- ❌ 避免 `goodRates` 低或 `remarkCnt` 极少的商品（售后风险高）
+- ❌ 避免 `saleQuantityList` 持续下降的商品（正在退潮）
 
 ### 2.4 常见错误及处理
 
@@ -163,6 +160,29 @@ source ~/.zshrc
 | "选品返回为空" | 关键词太冷门或无货源 | 建议更换关键词或扩大搜索范围 |
 | "铺货失败" | 商品信息不完整或平台审核 | 检查商品详情，等待审核或换品 |
 | "网络超时" | API响应慢或网络问题 | 自动重试，最多3次 |
+
+### 2.5 FAQ 经营知识库（按需加载）
+
+用户提出经营相关问题时，**不要凭经验回答**，而是加载对应 FAQ 文件后基于文件内容回答。
+
+加载方式：
+```bash
+cat {baseDir}/docs/faq/对应文件名.md
+```
+
+**路由表**：
+
+| 用户话题关键词 | 加载文件 |
+|---------------|---------|
+| 选哪个平台、抖店还是拼多多、淘宝适合吗、小红书代发 | `docs/faq/platform-selection.md` |
+| 选品风险、品类怎么选、节日选品、风险商品、品质退款率 | `docs/faq/product-selection.md` |
+| 运费模板、定价策略、加价倍率、过滤项、代发价智能价 | `docs/faq/listing-template.md` |
+| 自动采购、发货超时、中转费、偏远地区、催发货 | `docs/faq/fulfillment.md` |
+| 退货地址、仅退款、运费险、售后、品质问题、申诉 | `docs/faq/after-sales.md` |
+| 新店破零、30单、服务分、投流、商机中心、推广红包 | `docs/faq/new-store.md` |
+| 素材审核、白底图、商品体检、标题优化、1688水印 | `docs/faq/content-compliance.md` |
+
+> **重要**：如果用户问题跨多个话题，可加载多个文件。回答时引用 FAQ 中的具体建议，不要泛泛而谈。
 
 ---
 
@@ -179,13 +199,13 @@ source ~/.zshrc
 **执行流程**：
 
 ```
-1. 检测AK配置
-   └─ 未配置 → 进入【AK配置引导】
-   └─ 已配置 → 继续
+1. 检测AK配置（运行 `python3 configure.py`，无参数，查看输出）
+   └─ 输出"尚未配置 AK" → 进入【AK配置引导】
+   └─ 输出"当前已配置 AK" → 继续
 
-2. 检测绑定店铺
-   └─ 无店铺 → 进入【开店引导】
-   └─ 有店铺但过期 → 提示重新授权
+2. 检测绑定店铺（运行 `python3 shops.py`，查看 total 字段）
+   └─ total=0 → 进入【开店引导】
+   └─ 有店铺但 expired_count>0 → 提示重新授权
    └─ 店铺正常 → 进入【选品服务】
 ```
 
@@ -211,33 +231,38 @@ source ~/.zshrc
 > 4. 按提示完成开店
 > 5. 回到这里告诉我'我开好了'"
 
-### 模式二：配置AK后立即使用（无缝体验）
+### 模式二：配置AK后立即使用
 
 **典型场景**：
 ```
 用户: 帮我找红色洗脸盆
-Agent: ❌ AK未配置，请提供AK后重试
+Agent: AK未配置，请提供AK后重试
 用户: 我的AK是 xxx...xxx
-
-[Agent内部执行]
-1. 调用 configure.py 保存AK（文件+环境变量）
-2. 立即尝试 search_products()
-3. ✅ 成功 → 返回商品列表
-   
-Agent: ✅ AK已保存！找到10个商品：
-       1. 红色塑料洗脸盆 - ¥12.8
-       2. ...
-       
-       💡 提示：重启Gateway后所有会话都能使用此AK
 ```
 
-**如果当前会话无法使用**：
+**Agent 执行步骤**：
+
+1. 保存 AK（持久化，重启 Gateway 后所有会话自动生效）：
+```bash
+cd {baseDir}/scripts && python3 configure.py xxx...xxx
 ```
-Agent: ⚠️ AK已保存，但当前会话需要重启Gateway才能生效。
-       
-       请选择：
-       A) 立即重启 Gateway（推荐）
-       B) 稍后再说，我先记下你的需求
+
+2. 当前会话通过环境变量注入立即使用（无需重启）：
+```bash
+cd {baseDir}/scripts && ALI_1688_AK=xxx...xxx python3 search.py --query "红色洗脸盆"
+```
+
+> **重要**：configure.py 将 AK 写入 openclaw.json，但当前会话的环境变量不会自动更新。
+> 因此在本次会话中，所有后续脚本调用都需要在命令前加 `ALI_1688_AK=用户的AK`。
+> 重启 Gateway 后，新会话会由框架自动注入，无需再手动传递。
+
+**回复用户示例**：
+```
+✅ AK已保存！找到10个商品：
+   1. 红色塑料洗脸盆 - ¥12.8
+   2. ...
+
+💡 AK已持久化，重启 Gateway 后所有会话自动生效。
 ```
 
 ---
@@ -254,10 +279,8 @@ Agent: ⚠️ AK已保存，但当前会话需要重启Gateway才能生效。
 
 ```
 1. 解析需求
-   - 提取商品关键词
+   - 提取商品描述（可直接用用户原话）
    - 识别渠道偏好（默认抖音）
-   - 识别数量要求（默认10个）
-   - 识别价格区间（如有）
 
 2. 检查前提条件
    - AK已配置？
@@ -265,21 +288,21 @@ Agent: ⚠️ AK已保存，但当前会话需要重启Gateway才能生效。
    └─ 任一不满足 → 先解决前提条件
 
 3. 执行选品
-   - 调用 search_products()
-   - 展示结果（标题、价格、销量、图片）
-   - 保存数据ID供后续铺货使用
+   - 运行 `python3 search.py --query "用户描述" --channel 渠道`
+   - 展示输出中的 markdown 字段给用户
+   - 保存输出中的 data_id 供后续铺货使用
+   - 分析 products 中的 stats 数据，给出选品建议
 
 4. 询问下一步
    > "找到X个商品，满意吗？需要铺货到哪个店铺？"
 ```
 
-**需求解析技巧**：
-- "便宜的充电宝" → query="充电宝", sort_by_price=True
-- "女装连衣裙 抖音" → query="女装连衣裙", channel="douyin"
-- "50元以下的手机壳" → query="手机壳", max_price=50
-- "找20个" → count=20
+**需求解析技巧**（`--query` 直接传用户的选品描述，API 会自行理解语义）：
+- "便宜的充电宝" → `--query "便宜的充电宝"`
+- "女装连衣裙 抖音" → `--query "女装连衣裙" --channel douyin`
+- "帮我在1688找支持一件代发包邮的连衣裙，100元以内的" → `--query "帮我在1688找支持一件代发包邮的连衣裙，100元以内的"`
 
-### 模式三：用户要求铺货
+### 模式四：用户要求铺货
 
 **触发信号**：
 - "铺货到XXX"
@@ -291,27 +314,24 @@ Agent: ⚠️ AK已保存，但当前会话需要重启Gateway才能生效。
 
 ```
 1. 确认商品来源
-   - 刚选品的结果？（有data_id）
-   - 用户指定商品ID？
+   - 刚选品的结果？→ 使用 search.py 输出的 data_id
+   - 用户指定商品ID？→ 直接使用
    - 默认全部选品结果
 
-2. 确认目标店铺
-   - 用户说了具体店铺？
+2. 查询店铺并确认目标
+   - 运行 `python3 shops.py` 获取店铺列表和 shop_code
    - 只有一个店铺？自动选择
    - 多个店铺？列出让用户选择
+   - 店铺授权过期？提示在 1688 AI版APP 中重新授权
 
-3. 检查店铺授权
-   - 授权有效？继续
-   - 授权过期？提示重新授权
+3. 执行铺货
+   - 运行 `python3 publish.py --shop-code "店铺代码" --data-id "选品data_id"`
+   - 或 `python3 publish.py --shop-code "店铺代码" --item-ids "id1,id2"`
+   - 展示输出中的 markdown 字段给用户
 
-4. 执行铺货
-   - 调用 publish_items()
-   - 显示进度（如批量较大）
-   - 展示结果：成功数/失败数/失败原因
-
-5. 后续建议
+4. 后续建议
    - 成功 → 提醒去平台后台查看
-   - 失败 → 分析原因，建议重试或换品
+   - 失败 → 根据错误信息建议重试或换品
 ```
 
 **铺货前确认话术**（重要）：
@@ -322,7 +342,7 @@ Agent: ⚠️ AK已保存，但当前会话需要重启Gateway才能生效。
 >
 > 确认执行吗？"
 
-### 模式四：用户询问状态/帮助
+### 模式五：用户询问状态/帮助
 
 **触发信号**：
 - "我绑定了哪些店铺"
@@ -335,75 +355,146 @@ Agent: ⚠️ AK已保存，但当前会话需要重启Gateway才能生效。
 - 针对具体问题给出解答
 - 引用【常见错误及处理】章节
 
+### 模式六：用户咨询经营问题
+
+**触发信号**：
+- "抖店还是拼多多"
+- "运费模板怎么配"
+- "退货地址填哪个"
+- "新店怎么破零"
+- "素材审核不通过"
+- 任何关于选品策略、定价、售后、物流、合规的经营问题
+
+**处理方式**：
+1. 根据话题匹配【2.5 FAQ 路由表】
+2. 加载对应 FAQ 文件：`cat {baseDir}/docs/faq/xxx.md`
+3. **基于 FAQ 文件内容回答**，引用具体建议，不要凭经验泛泛而谈
+4. 如果用户问题跨多个话题，加载多个 FAQ 文件
+
 ---
 
 ## 四、API 使用参考
 
-### 4.1 核心函数
+### 4.1 核心脚本
+
+所有脚本位于 `{baseDir}/scripts/` 目录，通过 bash 在该目录下执行：
+
+**选品**：
+```bash
+cd {baseDir}/scripts && python3 search.py --query "帮我在1688找支持一件代发包邮的连衣裙，100元以内的" --channel douyin
+```
+
+**查店铺**：
+```bash
+cd {baseDir}/scripts && python3 shops.py
+```
+
+**铺货**：
+```bash
+cd {baseDir}/scripts && python3 publish.py --shop-code "260391138" --item-ids "123,456"
+```
+
+**检查 AK 配置状态**：
+```bash
+cd {baseDir}/scripts && python3 configure.py
+```
+
+**配置 AK**：
+```bash
+cd {baseDir}/scripts && python3 configure.py your_ak_here
+```
+
+### 4.2 核心数据结构
 
 ```python
-from scripts.api import search_products, list_bound_shops, publish_items
-
-# 选品
-products = search_products(
-    query="帮我在1688找支持一件代发包邮的连衣裙，100元以内的",      # 搜索关键词
-    channel="douyin",       # 下游渠道
-    max_results=10          # 返回数量（1-50）
-)
-# 返回: List[Product]
-# Product属性: id, title, price, image, url, sales
-
-# 查店铺
-shops = list_bound_shops()
-# 返回: List[Shop]
+# Product属性: id, title, price, image, url, stats(dict|None)
 # Shop属性: code, name, channel, is_authorized
-
-# 铺货
-result = publish_items(
-    item_ids=["123", "456"],    # 商品ID列表
-    shop_code="260391138"       # 店铺代码
-)
-# 返回: PublishResult
 # PublishResult属性: success, published_count, failed_items
 ```
 
-### 4.2 返回值处理
+**stats 字段详解**（选品 API 返回，部分商品可能无 stats）：
 
-**选品结果处理**：
-```python
-if products:
-    # 格式化展示
-    for i, p in enumerate(products[:10], 1):
-        print(f"{i}. {p.title} - ¥{p.price}")
-    
-    # 保存data_id供后续使用
-    data_id = save_to_memory(products)
-else:
-    # 无结果处理
-    suggest_alternatives(query)
+| 字段 | 含义 | 选品价值 |
+|------|------|---------|
+| `totalSales` | 累计销量 | 判断商品热度 |
+| `last30DaysSales` | 近30天销量 | 判断近期趋势 |
+| `last30DaysDropShippingSales` | 近30天下单量 | 一件代发活跃度 |
+| `repurchaseRate` | 复购率 | 高复购 = 产品质量好 |
+| `goodRates` | 好评率 | 售后风险评估 |
+| `remarkCnt` | 评价数量 | 样本量参考 |
+| `collectionRate24h` | 24h揽收率 | 发货速度指标 |
+| `downstreamOffer` | 下游铺货数 | 竞争激烈度 |
+| `totalOrder` | 累计下单笔数 | 历史交易规模 |
+| `categoryName` | 商品类目 | 类目归属 |
+| `categoryListName` | 三级类目 | 精确类目 |
+| `earliestListingTime` | 最早上架时间 | 新品/老品判断 |
+| `saleRangeList` | 面价范围趋势 | `[{date, minPrice, maxPrice}]` |
+| `saleQuantityList` | 销量趋势 | `[{date, saleQuantity}]` |
+| `tradePriceList` | 交易量价关系 | `[{date, tradeCount, minPrice, minPriceQuantity, maxPrice, maxPriceQuantity}]` |
+
+### 4.3 结果处理指引
+
+- **选品脚本**输出 JSON（含 `products`、`data_id`、`markdown`）：
+  - 将 `markdown` 展示给用户（已包含关键指标摘要）
+  - 保留 `data_id` 供后续铺货使用
+  - **`products` 数组包含每个商品的完整 `stats`，Agent 应基于 stats 给出选品建议**
+- **店铺脚本**输出 JSON（含 `total`、`valid_count`、`expired_count`、`shops`、`markdown`），关注 `expired_count` 并提醒用户重新授权
+- **铺货脚本**输出 JSON（含 `success`、`markdown`），根据 `success` 字段判断是否需要重试
+
+### 4.4 基于 stats 的选品分析（Agent 指引）
+
+拿到选品结果后，Agent 应主动分析 `products[].stats` 数据，根据用户意图给出**有依据的建议**：
+
+**推荐维度**（按场景组合使用）：
+
+1. **爆款潜力**：`last30DaysSales` 高 + `saleQuantityList` 呈上升趋势 → "近期销量增长明显，有爆款潜力"
+2. **供应稳定**：`collectionRate24h` 高 + `totalOrder` 大 → "揽收率高、历史成交量大，供应链可靠"
+3. **质量保障**：`goodRates` 高 + `remarkCnt` 多 + `repurchaseRate` 高 → "好评率和复购率双高，品质有保障"
+4. **竞争分析**：`downstreamOffer` 低 → "铺货竞争少，蓝海机会"；`downstreamOffer` 高 → "竞争激烈，需差异化运营"
+5. **价格趋势**：`saleRangeList` 或 `tradePriceList` 可用于分析价格波动和利润空间
+
+**对话示例**：
+```
+Agent: 找到15个商品，以下是推荐分析：
+
+🌟 推荐铺货 TOP3：
+1. 时尚女装连衣裙 - ¥12.8
+   30天销量 2,345 | 好评率 98.2% | 复购率 18.5% | 铺货数仅 12
+   → 销量高但铺货少，竞争小，推荐优先铺货
+
+2. ...
+
+⚠️ 需注意：
+- #5 棉麻T恤：30天销量从800降到200，下行趋势明显
+- #8 休闲裤：铺货数已达 156，竞争激烈
+
+需要铺货哪些商品？
 ```
 
-**店铺查询处理**：
-```python
-valid_shops = [s for s in shops if s.is_authorized]
-expired_shops = [s for s in shops if not s.is_authorized]
+### 4.5 完整链路示例（选品 → 查店 → 铺货）
 
-if expired_shops:
-    warn_about_expiration(expired_shops)
+以下示例展示一次完整的端到端操作，Agent 依次执行三步：
 
-if not valid_shops:
-    guide_to_bind_shop()
+**步骤一：选品**
+```bash
+cd {baseDir}/scripts && python3 search.py --query "夏季连衣裙" --channel douyin
 ```
+输出中提取：`data_id` = `"20260305_143022"`，将 `markdown` 展示给用户，分析 `products[].stats` 给出选品建议。
 
-**铺货结果处理**：
-```python
-if result.success:
-    celebrate_and_guide_next(result.published_count)
-else:
-    if result.failed_items:
-        analyze_failures(result.failed_items)
-        suggest_retry_or_skip()
+**步骤二：查询店铺**（用户确认满意后）
+```bash
+cd {baseDir}/scripts && python3 shops.py
 ```
+输出中找到：`shop_code` = `"260391138"`、`name` = `"梦幻生活小铺"`、`is_authorized` = `true`。
+
+**步骤三：铺货**（用户确认店铺后）
+```bash
+cd {baseDir}/scripts && python3 publish.py --shop-code "260391138" --data-id "20260305_143022"
+```
+将输出中的 `markdown` 展示给用户。
+
+> **注意**：如果是刚配置 AK 的当前会话，每条命令前需加 `ALI_1688_AK=用户的AK`，例如：
+> `cd {baseDir}/scripts && ALI_1688_AK=xxxxx python3 search.py --query "夏季连衣裙" --channel douyin`
 
 ---
 
@@ -455,7 +546,7 @@ else:
 - ❌ 不替代用户在电商平台的后台操作
 - ❌ 不保证商品一定能卖出
 - ❌ 不处理售后和客服问题
-- ❌ 不提供市场趋势预测
+- ❌ 不提供宏观市场趋势预测（但可基于商品 stats 分析单品趋势）
 
 ### 6.2 需要用户自己完成的
 
@@ -466,32 +557,11 @@ else:
 
 ### 6.3 技术限制
 
-- 单次选品最多50个商品
+- 选品返回数量由 API 决定，markdown 摘要最多展示20个，完整数据在 JSON 的 products 字段
 - 单次铺货最多50个商品
 - API调用频率受限于1688平台
 - 部分功能需要有效的AK和授权
 
 ---
 
-## 七、学习路径
-
-### 对于使用本技能的Agent：
-
-1. **第一阶段：掌握基础**
-   - 理解AK结构和签名机制
-   - 学会调用三个核心API
-   - 能处理常见的错误情况
-
-2. **第二阶段：用户引导**
-   - 识别不同用户类型（新手/熟练）
-   - 掌握四种使用模式的切换
-   - 能提供有效的选品建议
-
-3. **第三阶段：高级应用**
-   - 结合市场趋势给出选品策略
-   - 优化铺货效率（批量、定时）
-   - 建立用户的长期偏好模型
-
----
-
-*本技能持续进化中，遇到新问题请记录到 .learnings/ 目录。*
+*AK 配置说明见 `{baseDir}/docs/AK-CONFIG.md`，经营 FAQ 索引见 `{baseDir}/docs/FAQ.md`，各主题详情见 `{baseDir}/docs/faq/` 目录。*

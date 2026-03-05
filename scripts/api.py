@@ -20,7 +20,6 @@ from functools import wraps
 
 import requests
 import sys
-import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from auth import get_auth_headers
 
@@ -41,7 +40,7 @@ class Product:
     price: str
     image: str
     url: str
-    shop_name: str = ""
+    stats: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -62,7 +61,7 @@ class PublishResult:
 
 
 def with_retry(max_retries: int = MAX_RETRIES):
-    """重试装饰器"""
+    """重试装饰器 - 仅重试 ConnectionError / Timeout，耗尽后向上抛出"""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -73,42 +72,48 @@ def with_retry(max_retries: int = MAX_RETRIES):
                 except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                     last_exception = e
                     delay = min(RETRY_DELAY_BASE * (2 ** attempt), 10)
-                    logger.warning(f"请求失败(尝试{attempt+1}/{max_retries}): {e}, {delay}s后重试")
+                    logger.warning(f"网络异常(尝试{attempt+1}/{max_retries}): {e}, {delay}s后重试")
                     if attempt < max_retries - 1:
                         time.sleep(delay)
-            return {"success": False, "error": f"请求失败（已重试{max_retries}次）: {last_exception}"}
+            raise last_exception
         return wrapper
     return decorator
 
 
+SEARCH_CHANNEL_MAP = {
+    "taobao": "thyny",
+}
+
+
 @with_retry()
-def search_products(query: str, channel: str = "douyin", max_results: int = 10) -> List[Product]:
+def search_products(query: str, channel: str = "douyin") -> List[Product]:
     """
     搜索商品
-    
+
     Args:
-        query: 搜索关键词
+        query: 搜索关键词（自然语言描述，API 自行理解）
         channel: 下游渠道 (taobao/douyin/pinduoduo/xiaohongshu)
-        max_results: 最大返回数量 (1-50)
-    
+                 taobao 会自动映射为 API 所需的 thyny
+
     Returns:
-        Product对象列表
+        Product对象列表（含 stats 分析数据）
     """
+    api_channel = SEARCH_CHANNEL_MAP.get(channel, channel)
+
     url = f"{BASE_URL}/1688claw/skill/searchoffer"
     body = json.dumps({
         "query": query,
-        "channel": channel,
-        "count": str(min(max_results, 50))
+        "channel": api_channel,
     })
-    
+
     headers = get_auth_headers("POST", "/1688claw/skill/searchoffer", body)
     if not headers:
         logger.error("AK未配置 - 请通过以下方式配置:\n"
-                    "1. 设置环境变量: export ALI_1688_AK=your_ak\n"
-                    "2. 或在 ~/.openclaw/openclaw.json 中添加 env.ALI_1688_AK\n"
+                    "1. 在对话中告知 Agent 你的 AK\n"
+                    "2. 或运行: python3 configure.py YOUR_AK\n"
                     "3. 重启 Gateway 使配置生效")
         return []
-    
+
     try:
         response = requests.post(url, headers=headers, data=body, timeout=30)
         response.raise_for_status()
@@ -117,8 +122,7 @@ def search_products(query: str, channel: str = "douyin", max_results: int = 10) 
         if not result.get("success"):
             logger.error(f"API返回错误: {result.get('error', '未知错误')}")
             return []
-        
-        # 解析商品列表（Map结构：{id: {title, price, image}, ...}）
+
         data = result.get("data", {})
         products = []
         for item_id, item in data.items():
@@ -128,17 +132,14 @@ def search_products(query: str, channel: str = "douyin", max_results: int = 10) 
                 price=str(item.get("price") or "-"),
                 image=item.get("image") or "",
                 url=f"https://detail.1688.com/offer/{item_id}.html",
-                shop_name=""
+                stats=item.get("stats"),
             ))
-        
+
         logger.info(f"搜索成功: {query}, 返回 {len(products)} 个商品")
         return products
-        
+
     except requests.exceptions.HTTPError as e:
         logger.error(f"搜索失败 - HTTP错误 {e.response.status_code}: {e}")
-        return []
-    except requests.exceptions.RequestException as e:
-        logger.error(f"搜索失败 - 网络错误: {e}")
         return []
     except (KeyError, TypeError) as e:
         logger.error(f"搜索失败 - 数据解析错误: {e}")
@@ -187,38 +188,43 @@ def list_bound_shops() -> List[Shop]:
         logger.info(f"查询店铺成功: {len(shops)} 个")
         return shops
         
-    except Exception as e:
-        logger.error(f"查询店铺失败: {e}")
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"查询店铺失败 - HTTP错误: {e}")
+        return []
+    except (KeyError, TypeError, ValueError) as e:
+        logger.error(f"查询店铺失败 - 数据解析错误: {e}")
         return []
 
 
+CHANNEL_MAP = {
+    "淘宝": "thyny",
+    "抖店": "douyin",
+    "拼多多": "pinduoduo",
+    "小红书": "xiaohongshu"
+}
+
+
 @with_retry()
-def publish_items(item_ids: List[str], shop_code: str) -> PublishResult:
+def publish_items(item_ids: List[str], shop_code: str, channel: Optional[str] = None) -> PublishResult:
     """
     铺货到指定店铺
     
     Args:
         item_ids: 商品ID列表
         shop_code: 店铺代码
+        channel: 下游渠道（如已知可直接传入，避免重复查询店铺）
     
     Returns:
         PublishResult对象
     """
     url = f"{BASE_URL}/1688claw/skill/distributingoffer"
     
-    # 查询店铺信息获取渠道
-    shops = list_bound_shops()
-    target_shop = next((s for s in shops if s.code == shop_code), None)
-    if not target_shop:
-        return PublishResult(success=False, published_count=0, failed_items=[{"error": "店铺不存在"}])
-    
-    channel_map = {
-        "淘宝": "taobao",
-        "抖店": "douyin",
-        "拼多多": "pinduoduo",
-        "小红书": "xiaohongshu"
-    }
-    channel = channel_map.get(target_shop.channel, "douyin")
+    if not channel:
+        shops = list_bound_shops()
+        target_shop = next((s for s in shops if s.code == shop_code), None)
+        if not target_shop:
+            return PublishResult(success=False, published_count=0, failed_items=[{"error": "店铺不存在"}])
+        channel = CHANNEL_MAP.get(target_shop.channel, "douyin")
     
     body = json.dumps({
         "offerIdList": ",".join(item_ids[:50]),  # 限制50个
@@ -235,7 +241,6 @@ def publish_items(item_ids: List[str], shop_code: str) -> PublishResult:
         response.raise_for_status()
         result = response.json()
         
-        # 解析结果
         success = result.get("success", False) or result.get("code") == 200
         
         return PublishResult(
@@ -244,6 +249,9 @@ def publish_items(item_ids: List[str], shop_code: str) -> PublishResult:
             failed_items=[] if success else [{"error": result.get("error", "未知错误")}]
         )
         
-    except Exception as e:
-        logger.error(f"铺货失败: {e}")
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"铺货失败 - HTTP错误: {e}")
+        return PublishResult(success=False, published_count=0, failed_items=[{"error": str(e)}])
+    except (KeyError, TypeError, ValueError) as e:
+        logger.error(f"铺货失败 - 数据解析错误: {e}")
         return PublishResult(success=False, published_count=0, failed_items=[{"error": str(e)}])

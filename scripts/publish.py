@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """
 铺货模块 - 商品铺货到下游店铺
+
+Usage:
+    python3 publish.py --shop-code "260391138" --item-ids "123,456"
+    python3 publish.py --shop-code "260391138" --data-id "20240101_120000"
 """
 
+import argparse
 import os
 import json
+import sys
 from typing import List, Optional
 
-from api import publish_items, list_bound_shops, PublishResult
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from api import publish_items, list_bound_shops, PublishResult, CHANNEL_MAP
 
 
 def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
@@ -113,8 +120,8 @@ def publish_with_check(item_ids: List[str], shop_code: str) -> dict:
             "result": PublishResult(success=False, published_count=0, failed_items=[{"error": "授权过期"}])
         }
     
-    # 执行铺货
-    result = publish_items(item_ids, shop_code)
+    channel = CHANNEL_MAP.get(target_shop.channel, "douyin")
+    result = publish_items(item_ids, shop_code, channel=channel)
     markdown = format_publish_result(result, target_shop.name)
     
     return {
@@ -122,3 +129,33 @@ def publish_with_check(item_ids: List[str], shop_code: str) -> dict:
         "markdown": markdown,
         "result": result
     }
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="1688 铺货到下游店铺")
+    parser.add_argument("--shop-code", required=True, help="目标店铺代码")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--item-ids", help="商品ID列表，逗号分隔")
+    group.add_argument("--data-id", help="选品结果的 data_id（从 search.py 获取）")
+    args = parser.parse_args()
+
+    if args.data_id:
+        item_ids = load_products_by_data_id(args.data_id)
+        if not item_ids:
+            print(json.dumps({"success": False, "error": f"未找到 data_id={args.data_id} 对应的选品结果"}, ensure_ascii=False))
+            sys.exit(1)
+    else:
+        item_ids = [x.strip() for x in args.item_ids.split(",") if x.strip()]
+
+    try:
+        result = publish_with_check(item_ids, args.shop_code)
+        output = {
+            "success": result["success"],
+            "markdown": result["markdown"],
+        }
+    except Exception as e:
+        output = {
+            "success": False,
+            "markdown": f"铺货失败（网络异常，已重试3次）：{e}",
+        }
+    print(json.dumps(output, ensure_ascii=False, indent=2))

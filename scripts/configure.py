@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".openclaw" / "openclaw.json"
+SKILL_NAME = "1688-skills"
 
 
 def validate_ak(ak: str) -> tuple[bool, str]:
@@ -42,7 +43,9 @@ def validate_ak(ak: str) -> tuple[bool, str]:
 
 def configure_ak(ak: str) -> bool:
     """
-    将 AK 配置到 openclaw.json 的 env 字段
+    将 AK 配置到 openclaw.json 的 skills.entries 字段（符合 OpenClaw 规范）
+    
+    写入路径: config.skills.entries.<SKILL_NAME>.env.ALI_1688_AK
     
     Args:
         ak: 1688 AK
@@ -51,7 +54,6 @@ def configure_ak(ak: str) -> bool:
         是否成功
     """
     try:
-        # 读取现有配置
         config = {}
         if CONFIG_PATH.exists():
             try:
@@ -63,24 +65,19 @@ def configure_ak(ak: str) -> bool:
                 print(f"⚠️  配置文件解析失败，将创建新配置: {e}")
                 config = {}
         
-        # 确保 env 字段存在
-        if "env" not in config:
-            config["env"] = {}
+        # 按 OpenClaw 规范写入 skills.entries.<name>.env
+        config.setdefault("skills", {})
+        config["skills"].setdefault("entries", {})
+        config["skills"]["entries"].setdefault(SKILL_NAME, {})
+        config["skills"]["entries"][SKILL_NAME].setdefault("env", {})
         
-        # 设置 AK
-        old_ak = config["env"].get("ALI_1688_AK", "")
-        config["env"]["ALI_1688_AK"] = ak
+        old_ak = config["skills"]["entries"][SKILL_NAME]["env"].get("ALI_1688_AK", "")
+        config["skills"]["entries"][SKILL_NAME]["env"]["ALI_1688_AK"] = ak
         
-        # 写回文件
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         
-        # 同时设置当前进程的环境变量（立即生效）
-        import os
-        os.environ["ALI_1688_AK"] = ak
-        
-        # 显示变更信息
         if old_ak:
             masked_old = f"{old_ak[:4]}****{old_ak[-4:]}"
             print(f"📝 更新 AK: {masked_old} → {ak[:4]}****{ak[-4:]}")
@@ -111,7 +108,12 @@ def check_existing_config() -> tuple[bool, str]:
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        ak = config.get("env", {}).get("ALI_1688_AK", "")
+        ak = (config
+              .get("skills", {})
+              .get("entries", {})
+              .get(SKILL_NAME, {})
+              .get("env", {})
+              .get("ALI_1688_AK", ""))
         return bool(ak), ak
     except Exception:
         return False, ""

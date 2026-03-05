@@ -44,9 +44,9 @@ AK（Access Key）是 1688 AI 版的身份认证凭证，类似于"账号密码"
 
 Agent 会自动：
 1. 识别 AK 格式
-2. 配置到环境变量
-3. 验证是否有效
-4. 保存到 shell 配置文件（持久化）
+2. 通过 `configure.py` 保存到 `~/.openclaw/openclaw.json`（持久化）
+3. 在当前会话的后续命令中手动注入 AK 立即使用
+4. 重启 Gateway 后所有新会话由框架自动注入
 
 ---
 
@@ -55,13 +55,13 @@ Agent 会自动：
 如果你熟悉命令行，可以使用提供的配置工具：
 
 ```bash
-python scripts/configure.py your_ak_here
+cd {baseDir}/scripts && python3 configure.py your_ak_here
 ```
 
 此工具会：
 - 验证 AK 格式
-- 写入当前 shell 配置文件（~/.zshrc 或 ~/.bashrc）
-- 避免重复配置（自动替换旧值）
+- 写入 `~/.openclaw/openclaw.json`（`skills.entries.1688-skills.env.ALI_1688_AK`）
+- 重启 Gateway 后自动生效
 
 ---
 

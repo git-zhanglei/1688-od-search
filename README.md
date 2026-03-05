@@ -16,6 +16,12 @@
 - 1688 AI版 APP 账号
 - 已开通的下游店铺（抖音/拼多多/小红书/淘宝）
 
+### 安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
 ### 配置 AK
 
 ```bash
@@ -44,15 +50,25 @@ python scripts/configure.py your_ak_here
 ## 目录结构
 
 ```
-1688-od-search/
+1688-skills/
 ├── SKILL.md              # 技能知识手册（核心文档）
 ├── README.md             # 项目说明（本文档）
+├── requirements.txt      # Python 依赖
 ├── docs/
 │   ├── AK-CONFIG.md      # AK 配置说明
-│   └── FAQ.md            # 常见问题
+│   ├── FAQ.md            # FAQ 索引
+│   └── faq/              # 经营 FAQ（按主题拆分，Agent 按需加载）
+│       ├── platform-selection.md
+│       ├── product-selection.md
+│       ├── listing-template.md
+│       ├── fulfillment.md
+│       ├── after-sales.md
+│       ├── new-store.md
+│       └── content-compliance.md
 └── scripts/              # 核心实现（由 Agent 调用）
     ├── api.py
     ├── auth.py
+    ├── configure.py
     ├── search.py
     ├── shops.py
     └── publish.py
