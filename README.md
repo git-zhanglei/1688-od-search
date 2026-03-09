@@ -34,7 +34,7 @@ export ALI_1688_AK=your_ak_here
 python scripts/configure.py your_ak_here
 ```
 
-详细配置说明见 [docs/AK-CONFIG.md](docs/AK-CONFIG.md)
+详细配置说明见 [references/AK-CONFIG.md](references/AK-CONFIG.md)
 
 ## 使用方式
 
@@ -54,7 +54,7 @@ python scripts/configure.py your_ak_here
 ├── SKILL.md              # 技能知识手册（核心文档）
 ├── README.md             # 项目说明（本文档）
 ├── requirements.txt      # Python 依赖
-├── docs/
+├── references/
 │   ├── AK-CONFIG.md      # AK 配置说明
 │   ├── FAQ.md            # FAQ 索引
 │   └── faq/              # 经营 FAQ（按主题拆分，Agent 按需加载）
