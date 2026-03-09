@@ -68,56 +68,54 @@ def format_product_list(products: List[Product], max_show: int = 20) -> str:
     if not products:
         return "未找到符合条件的商品。"
 
-    lines = [f"## 商品列表（共 {len(products)} 个）\n"]
+    lines = [f"找到 **{len(products)}** 个商品：\n"]
 
     for i, p in enumerate(products[:max_show], 1):
-        lines.append(f"### {i}. {p.title} — ¥{p.price}")
+        lines.append(f"---")
+        lines.append(f"**{i}. {p.title}**")
         if p.image:
             lines.append(f"![商品图]({p.image})")
+        lines.append(f"💰 **¥{p.price}**")
 
         s = p.stats or {}
         if s:
-            cat = s.get("categoryListName") or s.get("categoryName") or ""
-            parts = []
+            # 核心指标表格
+            rows = []
             if s.get("last30DaysSales") is not None:
-                parts.append(f"**30天销量** {s['last30DaysSales']}")
-            if s.get("totalSales") is not None:
-                parts.append(f"**累计销量** {s['totalSales']}")
-            if s.get("last30DaysDropShippingSales") is not None:
-                parts.append(f"**30天下单** {s['last30DaysDropShippingSales']}")
-            if parts:
-                lines.append(f"- {' · '.join(parts)}")
-
-            parts2 = []
-            if s.get("repurchaseRate") is not None:
-                parts2.append(f"**复购率** {s['repurchaseRate']}")
+                rows.append(("30天销量", str(s["last30DaysSales"])))
             if s.get("goodRates") is not None:
-                parts2.append(f"**好评率** {s['goodRates']}")
-            if s.get("remarkCnt") is not None:
-                parts2.append(f"({s['remarkCnt']}条评价)")
-            if parts2:
-                lines.append(f"- {' · '.join(parts2)}")
-
-            parts3 = []
+                rows.append(("好评率", str(s["goodRates"])))
+            if s.get("repurchaseRate") is not None:
+                rows.append(("复购率", str(s["repurchaseRate"])))
             if s.get("downstreamOffer") is not None:
-                parts3.append(f"**铺货数** {s['downstreamOffer']}")
+                rows.append(("铺货数", str(s["downstreamOffer"])))
+
+            if rows:
+                lines.append("")
+                lines.append("| " + " | ".join(r[0] for r in rows) + " |")
+                lines.append("| " + " | ".join("---" for _ in rows) + " |")
+                lines.append("| " + " | ".join(r[1] for r in rows) + " |")
+                lines.append("")
+
+            # 补充指标（单行紧凑展示）
+            extra = []
+            if s.get("totalSales") is not None:
+                extra.append(f"累计销量 {s['totalSales']}")
             if s.get("collectionRate24h") is not None:
-                parts3.append(f"**揽收率** {s['collectionRate24h']}")
-            if s.get("totalOrder") is not None:
-                parts3.append(f"**累计下单** {s['totalOrder']}笔")
-            if parts3:
-                lines.append(f"- {' · '.join(parts3)}")
-
+                extra.append(f"揽收率 {s['collectionRate24h']}")
+            if s.get("remarkCnt") is not None:
+                extra.append(f"{s['remarkCnt']}条评价")
+            cat = s.get("categoryListName") or s.get("categoryName") or ""
             if cat:
-                lines.append(f"- **类目**: {cat}")
-            if s.get("earliestListingTime"):
-                lines.append(f"- **上架时间**: {s['earliestListingTime']}")
+                extra.append(cat)
+            if extra:
+                lines.append(" · ".join(extra))
 
-        lines.append(f"- [查看详情]({p.url}) · ID: `{p.id}`")
+        lines.append(f"[查看详情]({p.url}) · `{p.id}`")
         lines.append("")
 
     if len(products) > max_show:
-        lines.append(f"*... 还有 {len(products) - max_show} 个商品未在摘要中展示，完整数据见 JSON 输出的 products 字段*")
+        lines.append(f"*... 还有 {len(products) - max_show} 个商品，完整数据见 JSON 输出*")
 
     return "\n".join(lines)
 

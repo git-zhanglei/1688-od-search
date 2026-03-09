@@ -17,26 +17,28 @@ from api import list_bound_shops, Shop
 
 def format_shop_list(shops: List[Shop]) -> str:
     """
-    格式化店铺列表为 Markdown
-    
+    格式化店铺列表为 Markdown 表格
+
     Args:
         shops: 店铺列表
-    
+
     Returns:
         Markdown 格式字符串
     """
     if not shops:
         return "暂无绑定的店铺。"
-    
-    lines = [f"## 已绑定的店铺（共 {len(shops)} 个）\n"]
-    
+
+    lines = [f"你共绑定了 **{len(shops)}** 个店铺：\n"]
+
+    lines.append("| # | 店铺 | 平台 | 状态 | 店铺代码 |")
+    lines.append("| --- | --- | --- | --- | --- |")
+
     for i, s in enumerate(shops, 1):
-        status = "✅ 正常" if s.is_authorized else "❌ 授权过期"
-        lines.append(f"{i}. **{s.name}** ({s.channel})")
-        lines.append(f"   - 店铺代码: `{s.code}`")
-        lines.append(f"   - 状态: {status}")
-        lines.append("")
-    
+        status = "✅ 正常" if s.is_authorized else "⚠️ 授权过期"
+        name = s.name.replace("|", "\\|")
+        channel = s.channel.replace("|", "\\|")
+        lines.append(f"| {i} | **{name}** | {channel} | {status} | `{s.code}` |")
+
     return "\n".join(lines)
 
 
