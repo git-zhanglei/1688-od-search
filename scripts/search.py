@@ -79,14 +79,24 @@ def format_product_list(products: List[Product], max_show: int = 20) -> str:
 
         s = p.stats or {}
         if s:
+            def fmt_rate(v):
+                """小数转百分比，如 0.857 → 85.7%"""
+                if v is None:
+                    return None
+                try:
+                    f = float(v)
+                    return f"{f * 100:.1f}%" if f <= 1.0 else f"{f:.1f}%"
+                except (TypeError, ValueError):
+                    return str(v)
+
             # 核心指标表格
             rows = []
             if s.get("last30DaysSales") is not None:
                 rows.append(("30天销量", str(s["last30DaysSales"])))
             if s.get("goodRates") is not None:
-                rows.append(("好评率", str(s["goodRates"])))
+                rows.append(("好评率", fmt_rate(s["goodRates"])))
             if s.get("repurchaseRate") is not None:
-                rows.append(("复购率", str(s["repurchaseRate"])))
+                rows.append(("复购率", fmt_rate(s["repurchaseRate"])))
             if s.get("downstreamOffer") is not None:
                 rows.append(("铺货数", str(s["downstreamOffer"])))
 
@@ -101,8 +111,11 @@ def format_product_list(products: List[Product], max_show: int = 20) -> str:
             extra = []
             if s.get("totalSales") is not None:
                 extra.append(f"累计销量 {s['totalSales']}")
-            if s.get("collectionRate24h") is not None:
-                extra.append(f"揽收率 {s['collectionRate24h']}")
+            cr = s.get("collectionRate24h")
+            if cr is not None:
+                cr_fmt = fmt_rate(cr)
+                if cr_fmt:
+                    extra.append(f"揽收率 {cr_fmt}")
             if s.get("remarkCnt") is not None:
                 extra.append(f"{s['remarkCnt']}条评价")
             cat = s.get("categoryListName") or s.get("categoryName") or ""
@@ -155,6 +168,14 @@ def _product_to_dict(p: Product) -> dict:
 
 
 def main():
+    import os
+    if not os.environ.get("ALI_1688_AK"):
+        print(json.dumps({
+            "data_id": "", "product_count": 0, "products": [],
+            "markdown": "❌ AK 未配置，无法搜索商品。\n\n运行: `cli.py configure YOUR_AK`"
+        }, ensure_ascii=False, indent=2))
+        return
+
     parser = argparse.ArgumentParser(description="1688 商品搜索")
     parser.add_argument("--query", "-q", required=True, help="搜索关键词（自然语言描述）")
     parser.add_argument("--channel", "-c", default="douyin",

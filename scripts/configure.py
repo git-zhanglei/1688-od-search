@@ -69,12 +69,7 @@ def configure_via_gateway(ak: str) -> bool:
             json=payload,
             timeout=5,
         )
-        if resp.ok:
-            print(f"✅ AK 已通过 Gateway API 写入配置")
-            return True
-        else:
-            print(f"⚠️  Gateway API 返回 {resp.status_code}，尝试直接写文件...")
-            return False
+        return resp.ok
     except Exception:
         return False
 
@@ -106,9 +101,6 @@ def configure_via_file(ak: str) -> bool:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
 
-        tag = "更新" if old_ak else "新增"
-        print(f"📝 {tag} AK（写入文件）: {ak[:4]}****{ak[-4:]}")
-        print(f"📁 配置文件: {CONFIG_PATH}")
         return True
 
     except PermissionError:
@@ -149,17 +141,16 @@ def check_existing_config() -> tuple[bool, str]:
 def main():
     has_existing, existing_ak = check_existing_config()
 
-    # 无参数 → 查看状态
+    # 无参数 → 查看状态（JSON 输出）
     if len(sys.argv) < 2:
-        print("AK 配置助手")
-        print("=" * 50)
         if has_existing:
             masked = f"{existing_ak[:4]}****{existing_ak[-4:]}"
-            src = "环境变量（已生效）" if os.environ.get("ALI_1688_AK") else "配置文件"
-            print(f"✅ 当前已配置 AK: {masked}（来源: {src}）")
+            src = "环境变量（已生效）" if os.environ.get("ALI_1688_AK") else "配置文件（重启Gateway后生效）"
+            md = f"✅ AK 已配置: `{masked}`（来源: {src}）"
         else:
-            print("❌ 尚未配置 AK")
-        print("\n使用方法: python3 configure.py YOUR_AK_HERE")
+            md = "❌ 尚未配置 AK\n\n运行: `cli.py configure YOUR_AK`"
+        print(json.dumps({"ok": has_existing, "configured": has_existing, "markdown": md},
+                         ensure_ascii=False, indent=2))
         sys.exit(0)
 
     ak = sys.argv[1].strip()
@@ -167,18 +158,21 @@ def main():
     # 验证格式
     is_valid, error_msg = validate_ak(ak)
     if not is_valid:
-        print(f"❌ {error_msg}")
+        print(json.dumps({"ok": False, "markdown": f"❌ {error_msg}"}, ensure_ascii=False))
         sys.exit(1)
 
     # 写入：Gateway API 优先，fallback 写文件
     ok = configure_via_gateway(ak) or configure_via_file(ak)
     if not ok:
+        print(json.dumps({"ok": False, "markdown": "❌ AK 写入失败，请检查权限"}, ensure_ascii=False))
         sys.exit(1)
 
-    print("\n⚠️  重要: 请重启 Gateway 使配置全局生效!")
-    print("   openclaw gateway restart")
-    print("\n当前会话如需立即使用，请在命令前加:")
-    print(f"   ALI_1688_AK={ak[:4]}...{ak[-4:]} python3 cli.py search --query \"XXX\"")
+    md = (
+        f"✅ AK 已保存: `{ak[:4]}****{ak[-4:]}`\n\n"
+        "⚠️ 重启 Gateway 使配置全局生效: `openclaw gateway restart`\n\n"
+        f"当前会话立即使用: `ALI_1688_AK={ak[:4]}...{ak[-4:]} python3 cli.py search --query \"XXX\"`"
+    )
+    print(json.dumps({"ok": True, "markdown": md}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

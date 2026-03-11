@@ -138,7 +138,10 @@ def main():
     if args.data_id:
         item_ids = load_products_by_data_id(args.data_id)
         if not item_ids:
-            print(json.dumps({"success": False, "error": f"未找到 data_id={args.data_id} 对应的选品结果"}, ensure_ascii=False))
+            print(json.dumps({
+                "success": False,
+                "markdown": f"❌ 未找到 data_id=`{args.data_id}` 对应的选品结果，请重新搜索后获取新的 data_id。"
+            }, ensure_ascii=False))
             sys.exit(1)
     else:
         item_ids = [x.strip() for x in args.item_ids.split(",") if x.strip()]
