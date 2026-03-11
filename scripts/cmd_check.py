@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""
+配置状态检查命令
+
+检查：AK 是否配置、店铺是否绑定、数据目录是否可写
+
+Usage:
+    python3 cmd_check.py
+    # 或通过统一入口
+    python3 cli.py check
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _const import DATA_DIR
+
+
+def check_status() -> dict:
+    lines = []
+    ok = True
+
+    # 1. AK
+    ak = os.environ.get("ALI_1688_AK", "")
+    if ak:
+        lines.append(f"✅ AK 已配置: {ak[:4]}****{ak[-4:]}")
+        ak_ok = True
+    else:
+        lines.append("❌ AK 未配置 — 运行: `cli.py configure YOUR_AK`")
+        ak_ok = False
+        ok = False
+
+    # 2. 店铺（仅 AK 正常时查）
+    shops_count = 0
+    expired_count = 0
+    if ak_ok:
+        try:
+            from _api import list_bound_shops
+            shops = list_bound_shops()
+            shops_count = len(shops)
+            expired_count = sum(1 for s in shops if not s.is_authorized)
+            if shops_count == 0:
+                lines.append("⚠️  店铺未绑定 — 请在 1688 AI版 APP 中绑定店铺")
+            elif expired_count > 0:
+                lines.append(f"⚠️  {shops_count} 个店铺，其中 {expired_count} 个授权过期")
+            else:
+                lines.append(f"✅ 店铺已绑定: {shops_count} 个（全部正常）")
+        except Exception as e:
+            lines.append(f"⚠️  店铺查询失败: {e}")
+
+    # 3. 数据目录
+    try:
+        Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+        lines.append(f"✅ 数据目录: {DATA_DIR}")
+    except Exception as e:
+        lines.append(f"❌ 数据目录不可写: {e}")
+        ok = False
+
+    status_icon = "✅ 一切正常" if ok else "⚠️  有问题需处理"
+    markdown = f"## 1688-skills 状态检查\n\n" + "\n".join(f"- {l}" for l in lines) + f"\n\n**{status_icon}**"
+
+    return {
+        "ok": ok,
+        "ak_configured": ak_ok,
+        "shops_count": shops_count,
+        "expired_count": expired_count,
+        "markdown": markdown,
+    }
+
+
+def main():
+    result = check_status()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

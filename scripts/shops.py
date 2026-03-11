@@ -12,7 +12,7 @@ import sys
 from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from api import list_bound_shops, Shop
+from _api import list_bound_shops, Shop
 
 
 def format_shop_list(shops: List[Shop]) -> str:

@@ -24,3 +24,6 @@ data/products/*.json
 # OS
 .DS_Store
 Thumbs.db
+
+# 数据文件已迁移到 workspace/1688-skill-data/，忽略 skill 目录内的旧数据
+data/

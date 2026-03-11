@@ -15,7 +15,8 @@ from typing import List
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from api import search_products, Product
+from _api import search_products, Product
+from _const import DATA_DIR
 
 
 def save_search_result(products: List[Product], query: str, channel: str) -> str:
@@ -25,8 +26,7 @@ def save_search_result(products: List[Product], query: str, channel: str) -> str
     Returns:
         data_id (时间戳格式)
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(os.path.dirname(script_dir), "data", "products")
+    data_dir = DATA_DIR
     Path(data_dir).mkdir(parents=True, exist_ok=True)
 
     data_id = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -14,7 +14,8 @@ import sys
 from typing import List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from api import publish_items, list_bound_shops, PublishResult, CHANNEL_MAP
+from _api import publish_items, list_bound_shops, PublishResult
+from _const import CHANNEL_MAP, DATA_DIR
 
 
 def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
@@ -27,12 +28,7 @@ def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
     Returns:
         商品ID列表，未找到返回 None
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(
-        os.path.dirname(script_dir), 
-        "data", "products", 
-        f"1688_{data_id}.json"
-    )
+    filepath = os.path.join(DATA_DIR, f"1688_{data_id}.json")
     
     if not os.path.exists(filepath):
         return None

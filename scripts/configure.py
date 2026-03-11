@@ -1,112 +1,137 @@
 #!/usr/bin/env python3
 """
-AK 配置助手 - 将 AK 持久化到 OpenClaw 配置
+AK 配置助手
 
-使用方法:
-    python configure.py YOUR_AK_HERE
-    
-示例:
-    python configure.py YOUR_AK_HERE
+优先通过 OpenClaw Gateway REST API 写入配置（安全，不破坏 JSON5 格式）。
+Gateway 不可用时 fallback 到直接写文件（向后兼容）。
+
+Usage:
+    python3 configure.py              # 查看当前配置状态
+    python3 configure.py YOUR_AK      # 写入 AK
 """
 
 import json
+import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 CONFIG_PATH = Path.home() / ".openclaw" / "openclaw.json"
 SKILL_NAME = "1688-skills"
 
 
+# ── 验证 ─────────────────────────────────────────────────────────────────────
+
 def validate_ak(ak: str) -> tuple[bool, str]:
-    """
-    验证 AK 格式
-    
-    Args:
-        ak: 待验证的 AK
-    
-    Returns:
-        (是否有效, 错误信息)
-    """
     if not ak:
         return False, "AK 不能为空"
-    
     if len(ak) < 32:
         return False, f"AK 长度不足（当前 {len(ak)}，需要至少 32 位）"
-    
-    # 检查是否为合法的 base64/hex 字符
-    allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-=")
-    if not all(c in allowed_chars for c in ak):
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-=")
+    if not all(c in allowed for c in ak):
         return False, "AK 包含非法字符"
-    
     return True, ""
 
 
-def configure_ak(ak: str) -> bool:
+# ── 方式一：Gateway API ───────────────────────────────────────────────────────
+
+def configure_via_gateway(ak: str) -> bool:
     """
-    将 AK 配置到 openclaw.json 的 skills.entries 字段（符合 OpenClaw 规范）
-    
-    写入路径: config.skills.entries.<SKILL_NAME>.env.ALI_1688_AK
-    
-    Args:
-        ak: 1688 AK
-    
-    Returns:
-        是否成功
+    通过 OpenClaw Gateway REST API 写入配置。
+    安全：不直接读写 openclaw.json，避免破坏 JSON5 注释/格式。
     """
     try:
-        config = {}
+        import requests
+    except ImportError:
+        return False
+
+    gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:18789")
+    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
+
+    payload = {
+        "skills": {
+            "entries": {
+                SKILL_NAME: {
+                    "env": {"ALI_1688_AK": ak}
+                }
+            }
+        }
+    }
+
+    try:
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        resp = requests.patch(
+            f"{gateway_url}/api/config",
+            headers=headers,
+            json=payload,
+            timeout=5,
+        )
+        if resp.ok:
+            print(f"✅ AK 已通过 Gateway API 写入配置")
+            return True
+        else:
+            print(f"⚠️  Gateway API 返回 {resp.status_code}，尝试直接写文件...")
+            return False
+    except Exception:
+        return False
+
+
+# ── 方式二：直接写文件（fallback）────────────────────────────────────────────
+
+def configure_via_file(ak: str) -> bool:
+    """直接写入 openclaw.json（fallback，不破坏已有结构）"""
+    try:
+        config: dict = {}
         if CONFIG_PATH.exists():
             try:
-                with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                     content = f.read().strip()
                     if content:
                         config = json.loads(content)
             except json.JSONDecodeError as e:
                 print(f"⚠️  配置文件解析失败，将创建新配置: {e}")
-                config = {}
-        
-        # 按 OpenClaw 规范写入 skills.entries.<name>.env
+
         config.setdefault("skills", {})
         config["skills"].setdefault("entries", {})
         config["skills"]["entries"].setdefault(SKILL_NAME, {})
         config["skills"]["entries"][SKILL_NAME].setdefault("env", {})
-        
+
         old_ak = config["skills"]["entries"][SKILL_NAME]["env"].get("ALI_1688_AK", "")
         config["skills"]["entries"][SKILL_NAME]["env"]["ALI_1688_AK"] = ak
-        
+
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
-        
-        if old_ak:
-            masked_old = f"{old_ak[:4]}****{old_ak[-4:]}"
-            print(f"📝 更新 AK: {masked_old} → {ak[:4]}****{ak[-4:]}")
-        else:
-            print(f"📝 新增 AK: {ak[:4]}****{ak[-4:]}")
-        
+
+        tag = "更新" if old_ak else "新增"
+        print(f"📝 {tag} AK（写入文件）: {ak[:4]}****{ak[-4:]}")
+        print(f"📁 配置文件: {CONFIG_PATH}")
         return True
-        
+
     except PermissionError:
         print(f"❌ 权限错误: 无法写入 {CONFIG_PATH}")
-        print("   请检查文件权限")
         return False
     except Exception as e:
         print(f"❌ 配置失败: {e}")
         return False
 
 
+# ── 读取当前状态 ──────────────────────────────────────────────────────────────
+
 def check_existing_config() -> tuple[bool, str]:
-    """
-    检查是否已有 AK 配置
-    
-    Returns:
-        (是否已配置, AK 或空字符串)
-    """
+    """检查是否已有 AK（从环境变量或配置文件）"""
+    # 优先检查环境变量（Gateway 注入后的状态）
+    env_ak = os.environ.get("ALI_1688_AK", "")
+    if env_ak:
+        return True, env_ak
+
     if not CONFIG_PATH.exists():
         return False, ""
-    
     try:
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             config = json.load(f)
         ak = (config
               .get("skills", {})
@@ -119,49 +144,41 @@ def check_existing_config() -> tuple[bool, str]:
         return False, ""
 
 
+# ── 主入口 ────────────────────────────────────────────────────────────────────
+
 def main():
-    # 检查现有配置
     has_existing, existing_ak = check_existing_config()
-    
+
+    # 无参数 → 查看状态
     if len(sys.argv) < 2:
         print("AK 配置助手")
         print("=" * 50)
-        
         if has_existing:
             masked = f"{existing_ak[:4]}****{existing_ak[-4:]}"
-            print(f"✅ 当前已配置 AK: {masked}")
-            print(f"📁 配置文件: {CONFIG_PATH}")
+            src = "环境变量（已生效）" if os.environ.get("ALI_1688_AK") else "配置文件"
+            print(f"✅ 当前已配置 AK: {masked}（来源: {src}）")
         else:
             print("❌ 尚未配置 AK")
-        
-        print("\n使用方法:")
-        print("  python configure.py YOUR_AK_HERE")
-        print("\n示例:")
-        print("  python configure.py YOUR_AK_HERE")
-        
-        if has_existing:
-            print("\n⚠️  如需更换 AK，直接运行上述命令即可")
-        
+        print("\n使用方法: python3 configure.py YOUR_AK_HERE")
         sys.exit(0)
-    
+
     ak = sys.argv[1].strip()
-    
-    # 验证 AK
+
+    # 验证格式
     is_valid, error_msg = validate_ak(ak)
     if not is_valid:
         print(f"❌ {error_msg}")
         sys.exit(1)
-    
-    # 配置 AK
-    if configure_ak(ak):
-        print(f"✅ AK 已保存到: {CONFIG_PATH}")
-        print("\n⚠️  重要: 请重启 Gateway 使配置生效!")
-        print("\n重启方法:")
-        print("  方法1: pkill openclaw-gateway && openclaw gateway")
-        print("  方法2: openclaw gateway restart")
-        print("\n重启后，所有会话均可使用此 AK")
-    else:
+
+    # 写入：Gateway API 优先，fallback 写文件
+    ok = configure_via_gateway(ak) or configure_via_file(ak)
+    if not ok:
         sys.exit(1)
+
+    print("\n⚠️  重要: 请重启 Gateway 使配置全局生效!")
+    print("   openclaw gateway restart")
+    print("\n当前会话如需立即使用，请在命令前加:")
+    print(f"   ALI_1688_AK={ak[:4]}...{ak[-4:]} python3 cli.py search --query \"XXX\"")
 
 
 if __name__ == "__main__":
