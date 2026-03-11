@@ -29,7 +29,7 @@ from _const import CHANNEL_MAP, SEARCH_LIMIT, PUBLISH_LIMIT
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('1688_api')
 
-BASE_URL = "https://ainext.1688.com"
+BASE_URL = "https://ainextpre.1688.com"
 MAX_RETRIES = 3
 RETRY_DELAY_BASE = 1
 
