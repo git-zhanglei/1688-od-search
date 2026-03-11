@@ -12,7 +12,7 @@ import sys
 from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from api import list_bound_shops, Shop
+from _api import list_bound_shops, Shop
 
 
 def format_shop_list(shops: List[Shop]) -> str:
@@ -77,7 +77,15 @@ def check_shop_status() -> dict:
     }
 
 
-if __name__ == "__main__":
+def main():
+    import os
+    if not os.environ.get("ALI_1688_AK"):
+        print(json.dumps({
+            "total": 0, "valid_count": 0, "expired_count": 0, "shops": [],
+            "markdown": "❌ AK 未配置，无法查询店铺。\n\n运行: `cli.py configure YOUR_AK`"
+        }, ensure_ascii=False, indent=2))
+        return
+
     try:
         status = check_shop_status()
         output = {
@@ -92,10 +100,11 @@ if __name__ == "__main__":
         }
     except Exception as e:
         output = {
-            "total": 0,
-            "valid_count": 0,
-            "expired_count": 0,
-            "shops": [],
+            "total": 0, "valid_count": 0, "expired_count": 0, "shops": [],
             "markdown": f"查询店铺失败（网络异常，已重试3次）：{e}",
         }
     print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

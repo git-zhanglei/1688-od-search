@@ -15,7 +15,8 @@ from typing import List
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from api import search_products, Product
+from _api import search_products, Product
+from _const import DATA_DIR
 
 
 def save_search_result(products: List[Product], query: str, channel: str) -> str:
@@ -25,8 +26,7 @@ def save_search_result(products: List[Product], query: str, channel: str) -> str
     Returns:
         data_id (时间戳格式)
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(os.path.dirname(script_dir), "data", "products")
+    data_dir = DATA_DIR
     Path(data_dir).mkdir(parents=True, exist_ok=True)
 
     data_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -79,14 +79,24 @@ def format_product_list(products: List[Product], max_show: int = 20) -> str:
 
         s = p.stats or {}
         if s:
+            def fmt_rate(v):
+                """小数转百分比，如 0.857 → 85.7%"""
+                if v is None:
+                    return None
+                try:
+                    f = float(v)
+                    return f"{f * 100:.1f}%" if f <= 1.0 else f"{f:.1f}%"
+                except (TypeError, ValueError):
+                    return str(v)
+
             # 核心指标表格
             rows = []
             if s.get("last30DaysSales") is not None:
                 rows.append(("30天销量", str(s["last30DaysSales"])))
             if s.get("goodRates") is not None:
-                rows.append(("好评率", str(s["goodRates"])))
+                rows.append(("好评率", fmt_rate(s["goodRates"])))
             if s.get("repurchaseRate") is not None:
-                rows.append(("复购率", str(s["repurchaseRate"])))
+                rows.append(("复购率", fmt_rate(s["repurchaseRate"])))
             if s.get("downstreamOffer") is not None:
                 rows.append(("铺货数", str(s["downstreamOffer"])))
 
@@ -101,8 +111,11 @@ def format_product_list(products: List[Product], max_show: int = 20) -> str:
             extra = []
             if s.get("totalSales") is not None:
                 extra.append(f"累计销量 {s['totalSales']}")
-            if s.get("collectionRate24h") is not None:
-                extra.append(f"揽收率 {s['collectionRate24h']}")
+            cr = s.get("collectionRate24h")
+            if cr is not None:
+                cr_fmt = fmt_rate(cr)
+                if cr_fmt:
+                    extra.append(f"揽收率 {cr_fmt}")
             if s.get("remarkCnt") is not None:
                 extra.append(f"{s['remarkCnt']}条评价")
             cat = s.get("categoryListName") or s.get("categoryName") or ""
@@ -154,7 +167,15 @@ def _product_to_dict(p: Product) -> dict:
     return d
 
 
-if __name__ == "__main__":
+def main():
+    import os
+    if not os.environ.get("ALI_1688_AK"):
+        print(json.dumps({
+            "data_id": "", "product_count": 0, "products": [],
+            "markdown": "❌ AK 未配置，无法搜索商品。\n\n运行: `cli.py configure YOUR_AK`"
+        }, ensure_ascii=False, indent=2))
+        return
+
     parser = argparse.ArgumentParser(description="1688 商品搜索")
     parser.add_argument("--query", "-q", required=True, help="搜索关键词（自然语言描述）")
     parser.add_argument("--channel", "-c", default="douyin",
@@ -178,3 +199,7 @@ if __name__ == "__main__":
             "markdown": f"搜索失败（网络异常，已重试3次）：{e}",
         }
     print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

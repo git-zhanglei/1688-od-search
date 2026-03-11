@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-1688 API 封装模块 - 核心接口
+1688 API 封装模块（内部模块）
 
 提供三个原子能力：
-1. search_products - 商品搜索
+1. search_products  - 商品搜索
 2. list_bound_shops - 查询绑定店铺
-3. publish_items - 铺货
+3. publish_items    - 铺货
 
 认证：自动从 ALI_1688_AK 环境变量获取并签名
+渠道：统一使用 _const.CHANNEL_MAP，不在本模块重复定义
 """
 
 import json
@@ -21,9 +22,9 @@ from functools import wraps
 import requests
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from auth import get_auth_headers
+from _auth import get_auth_headers
+from _const import CHANNEL_MAP
 
-# 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('1688_api')
 
@@ -80,38 +81,26 @@ def with_retry(max_retries: int = MAX_RETRIES):
     return decorator
 
 
-SEARCH_CHANNEL_MAP = {
-    "taobao": "thyny",
-}
-
-
 @with_retry()
 def search_products(query: str, channel: str = "douyin") -> List[Product]:
     """
     搜索商品
 
     Args:
-        query: 搜索关键词（自然语言描述，API 自行理解）
-        channel: 下游渠道 (taobao/douyin/pinduoduo/xiaohongshu)
-                 taobao 会自动映射为 API 所需的 thyny
+        query:   搜索关键词（自然语言描述，API 自行理解语义）
+        channel: 下游渠道，支持英文名或中文别名（见 _const.CHANNEL_MAP）
 
     Returns:
-        Product对象列表（含 stats 分析数据）
+        Product 对象列表（含 stats 分析数据）
     """
-    api_channel = SEARCH_CHANNEL_MAP.get(channel, channel)
+    api_channel = CHANNEL_MAP.get(channel, channel)
 
     url = f"{BASE_URL}/1688claw/skill/searchoffer"
-    body = json.dumps({
-        "query": query,
-        "channel": api_channel,
-    })
+    body = json.dumps({"query": query, "channel": api_channel})
 
     headers = get_auth_headers("POST", "/1688claw/skill/searchoffer", body)
     if not headers:
-        logger.error("AK未配置 - 请通过以下方式配置:\n"
-                    "1. 在对话中告知 Agent 你的 AK\n"
-                    "2. 或运行: python3 configure.py YOUR_AK\n"
-                    "3. 重启 Gateway 使配置生效")
+        logger.error("AK未配置 - 请运行: python3 cli.py configure YOUR_AK")
         return []
 
     try:
@@ -148,32 +137,27 @@ def search_products(query: str, channel: str = "douyin") -> List[Product]:
 
 @with_retry()
 def list_bound_shops() -> List[Shop]:
-    """
-    查询已绑定的店铺列表
-    
-    Returns:
-        Shop对象列表
-    """
+    """查询已绑定的店铺列表"""
     url = f"{BASE_URL}/1688claw/skill/searchshop"
     body = "{}"
-    
+
     headers = get_auth_headers("POST", "/1688claw/skill/searchshop", body)
     if not headers:
         logger.error("AK未配置")
         return []
-    
+
     try:
         response = requests.post(url, headers=headers, data=body, timeout=30)
         response.raise_for_status()
         result = response.json()
-        
+
         if isinstance(result, dict) and "data" in result:
             shops_data = result["data"]
         elif isinstance(result, list):
             shops_data = result[0] if len(result) > 0 and isinstance(result[0], list) else result
         else:
             shops_data = []
-        
+
         shops = []
         for s in shops_data:
             tool_expired = s.get("toolExpired", False)
@@ -184,10 +168,10 @@ def list_bound_shops() -> List[Shop]:
                 channel=s.get("channelDesc") or s.get("channel", "未知平台"),
                 is_authorized=not (tool_expired or shop_expired)
             ))
-        
+
         logger.info(f"查询店铺成功: {len(shops)} 个")
         return shops
-        
+
     except requests.exceptions.HTTPError as e:
         logger.error(f"查询店铺失败 - HTTP错误: {e}")
         return []
@@ -196,59 +180,51 @@ def list_bound_shops() -> List[Shop]:
         return []
 
 
-CHANNEL_MAP = {
-    "淘宝": "thyny",
-    "抖店": "douyin",
-    "拼多多": "pinduoduo",
-    "小红书": "xiaohongshu"
-}
-
-
 @with_retry()
 def publish_items(item_ids: List[str], shop_code: str, channel: Optional[str] = None) -> PublishResult:
     """
     铺货到指定店铺
-    
+
     Args:
-        item_ids: 商品ID列表
+        item_ids:  商品ID列表（最多50个）
         shop_code: 店铺代码
-        channel: 下游渠道（如已知可直接传入，避免重复查询店铺）
-    
+        channel:   下游渠道 API 值（如已知可直接传入，避免重复查询店铺）
+
     Returns:
-        PublishResult对象
+        PublishResult 对象
     """
     url = f"{BASE_URL}/1688claw/skill/distributingoffer"
-    
+
     if not channel:
         shops = list_bound_shops()
         target_shop = next((s for s in shops if s.code == shop_code), None)
         if not target_shop:
             return PublishResult(success=False, published_count=0, failed_items=[{"error": "店铺不存在"}])
         channel = CHANNEL_MAP.get(target_shop.channel, "douyin")
-    
+
     body = json.dumps({
-        "offerIdList": ",".join(item_ids[:50]),  # 限制50个
+        "offerIdList": ",".join(item_ids[:50]),
         "channel": channel,
         "shopCode": shop_code
     })
-    
+
     headers = get_auth_headers("POST", "/1688claw/skill/distributingoffer", body)
     if not headers:
         return PublishResult(success=False, published_count=0, failed_items=[{"error": "AK未配置"}])
-    
+
     try:
         response = requests.post(url, headers=headers, data=body, timeout=60)
         response.raise_for_status()
         result = response.json()
-        
+
         success = result.get("success", False) or result.get("code") == 200
-        
+
         return PublishResult(
             success=success,
             published_count=len(item_ids) if success else 0,
             failed_items=[] if success else [{"error": result.get("error", "未知错误")}]
         )
-        
+
     except requests.exceptions.HTTPError as e:
         logger.error(f"铺货失败 - HTTP错误: {e}")
         return PublishResult(success=False, published_count=0, failed_items=[{"error": str(e)}])
