@@ -26,17 +26,23 @@ metadata: {"openclaw": {"emoji": "🛒", "requires": {"env": ["ALI_1688_AK"], "b
 
 ## 标准流程
 
-**选品→铺货**：`check` → `search` → 确认 data_id → `shops` → `publish`
+**选品→铺货**：`check` → `search` →  用户筛选(Agent 推荐 + 用户确认) → `shops` → `publish`
 **首次使用**：`check`（无 AK → `configure`；无店铺 → 引导开店）
 **刚配置 AK**：当前会话命令前加 `ALI_1688_AK=xxx`，重启 Gateway 后全局生效
 
+## 执行前置（必须）
+
+- 执行 `search` 前：先完整阅读 `references/search.md`
+- 执行 `shops` / `publish` 前：先完整阅读 `references/publish.md`
+- 执行 `configure` 前：先完整阅读 `references/configure.md`
+
 ## AK 引导话术
 
-> "需要先配置 AK。打开 **1688 AI版 APP** 首页，点击「一键部署开店Claw，即刻赚钱🦞」，进入页面获取 AK，然后告诉我：'我的AK是 xxx'"
+> "需要先配置 AK。打开 [**1688 AI版 APP**](https://air.1688.com/kapp/1688-ai-app/pages/home?from=1688-shopkeeper)（没装的话点链接下载），首页点击「一键部署开店Claw，全自动化赚钱🦞」，进入页面获取 AK，然后告诉我：'我的AK是 xxx'"
 
 ## 开店引导话术
 
-> "还没有绑定店铺。打开 1688 AI版APP → 首页「一键开店」，开好后告诉我。"
+> "还没有绑定店铺。打开 [1688 AI版APP](https://air.1688.com/kapp/1688-ai-app/pages/home?from=1688-shopkeeper) → 首页「一键开店」，开好后告诉我。"
 
 ## FAQ 经营知识（按需加载）
 

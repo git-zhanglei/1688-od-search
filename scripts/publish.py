@@ -15,7 +15,7 @@ from typing import List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _api import publish_items, list_bound_shops, PublishResult
-from _const import CHANNEL_MAP, DATA_DIR
+from _const import CHANNEL_MAP, DATA_DIR, PUBLISH_LIMIT
 
 
 def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
@@ -48,7 +48,7 @@ def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
         return None
 
 
-def format_publish_result(result: PublishResult, shop_name: str = "") -> str:
+def format_publish_result(result: PublishResult, shop_name: str = "", origin_count: int = 0) -> str:
     """
     格式化铺货结果为 Markdown
     
@@ -66,10 +66,23 @@ def format_publish_result(result: PublishResult, shop_name: str = "") -> str:
     
     if result.success:
         lines.append(f"✅ **成功铺货 {result.published_count} 个商品**")
+        if result.submitted_count:
+            lines.append(f"- 本次提交：{result.submitted_count} 个")
+        if result.fail_count:
+            lines.append(f"- 失败：{result.fail_count} 个")
+        if origin_count > PUBLISH_LIMIT:
+            lines.append(f"- ⚠️ 检测到商品总数 {origin_count}，按接口限制仅提交前 {PUBLISH_LIMIT} 个")
         lines.append("")
         lines.append("请登录对应平台后台查看已发布的商品。")
     else:
         lines.append("❌ **铺货失败**")
+        lines.append("")
+        if result.submitted_count:
+            lines.append(f"- 本次提交：{result.submitted_count} 个")
+        if result.fail_count:
+            lines.append(f"- 失败：{result.fail_count} 个")
+        if origin_count > PUBLISH_LIMIT:
+            lines.append(f"- ⚠️ 检测到商品总数 {origin_count}，按接口限制仅提交前 {PUBLISH_LIMIT} 个")
         lines.append("")
         
         if result.failed_items:
@@ -87,7 +100,7 @@ def format_publish_result(result: PublishResult, shop_name: str = "") -> str:
     return "\n".join(lines)
 
 
-def publish_with_check(item_ids: List[str], shop_code: str) -> dict:
+def publish_with_check(item_ids: List[str], shop_code: str, dry_run: bool = False) -> dict:
     """
     带检查的铺货（便捷函数）
     
@@ -106,30 +119,73 @@ def publish_with_check(item_ids: List[str], shop_code: str) -> dict:
         return {
             "success": False,
             "markdown": "❌ 店铺不存在，请检查店铺代码。",
-            "result": PublishResult(success=False, published_count=0, failed_items=[{"error": "店铺不存在"}])
+            "result": PublishResult(success=False, published_count=0, failed_items=[{"error": "店铺不存在"}]),
+            "origin_count": len(item_ids),
         }
     
     if not target_shop.is_authorized:
         return {
             "success": False,
             "markdown": f"❌ 店铺「{target_shop.name}」授权已过期，请在1688 AI版APP中重新授权。",
-            "result": PublishResult(success=False, published_count=0, failed_items=[{"error": "授权过期"}])
+            "result": PublishResult(success=False, published_count=0, failed_items=[{"error": "授权过期"}]),
+            "origin_count": len(item_ids),
         }
-    
+
+    origin_count = len(item_ids)
+    if dry_run:
+        preview_count = min(origin_count, PUBLISH_LIMIT)
+        markdown = (
+            "## 铺货预检查结果\n\n"
+            f"✅ 店铺校验通过：{target_shop.name}\n"
+            f"- 来源商品数：{origin_count}\n"
+            f"- 实际将提交：{preview_count}\n"
+            + (f"- ⚠️ 超出接口限制，仅会提交前 {PUBLISH_LIMIT} 个\n" if origin_count > PUBLISH_LIMIT else "")
+            + "\n确认后去掉 `--dry-run` 执行正式铺货。"
+        )
+        return {
+            "success": True,
+            "markdown": markdown,
+            "result": PublishResult(
+                success=True,
+                published_count=0,
+                failed_items=[],
+                submitted_count=preview_count,
+                fail_count=0,
+                all_count=origin_count,
+            ),
+            "origin_count": origin_count,
+        }
+
     channel = CHANNEL_MAP.get(target_shop.channel, "douyin")
     result = publish_items(item_ids, shop_code, channel=channel)
-    markdown = format_publish_result(result, target_shop.name)
+    markdown = format_publish_result(result, target_shop.name, origin_count=origin_count)
     
     return {
         "success": result.success,
         "markdown": markdown,
-        "result": result
+        "result": result,
+        "origin_count": origin_count,
     }
+
+
+def normalize_item_ids(raw_item_ids: List[str]) -> List[str]:
+    """清洗并去重商品ID，保留顺序"""
+    seen = set()
+    cleaned = []
+    for item_id in raw_item_ids:
+        if not item_id:
+            continue
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        cleaned.append(item_id)
+    return cleaned
 
 
 def main():
     parser = argparse.ArgumentParser(description="1688 铺货到下游店铺")
     parser.add_argument("--shop-code", required=True, help="目标店铺代码")
+    parser.add_argument("--dry-run", action="store_true", help="仅做预检查，不执行实际铺货")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--item-ids", help="商品ID列表，逗号分隔")
     group.add_argument("--data-id", help="选品结果的 data_id（从 search.py 获取）")
@@ -147,12 +203,32 @@ def main():
     else:
         item_ids = [x.strip() for x in args.item_ids.split(",") if x.strip()]
 
+    item_ids = normalize_item_ids(item_ids)
+
+    if not item_ids:
+        print(json.dumps({
+            "success": False,
+            "markdown": "❌ 没有可用的商品ID，请检查 `--item-ids` 或 `--data-id`。",
+            "data": {"success": False},
+        }, ensure_ascii=False))
+        sys.exit(1)
+
     try:
-        result = publish_with_check(item_ids, args.shop_code)
+        result = publish_with_check(item_ids, args.shop_code, dry_run=args.dry_run)
+        submitted_count = min(result["origin_count"], PUBLISH_LIMIT)
+        fail_count = result["result"].fail_count
+        success_count = result["result"].published_count
         output = {
             "success": result["success"],
             "markdown": result["markdown"],
-            "data": {"success": result["success"]},
+            "data": {
+                "success": result["success"],
+                "origin_count": result["origin_count"],
+                "submitted_count": submitted_count,
+                "success_count": success_count,
+                "fail_count": fail_count,
+                "dry_run": args.dry_run,
+            },
         }
     except Exception as e:
         output = {

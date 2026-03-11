@@ -4,8 +4,8 @@ AK（Access Key）是访问 1688 平台的身份凭证，前 32 位是 Secret，
 
 ## 获取 AK
 
-1. 下载 **1688 AI版 APP**
-2. 打开 APP 首页，点击「一键部署开店Claw，即刻赚钱🦞」
+1. 下载 [**1688 AI版 APP**](https://air.1688.com/kapp/1688-ai-app/pages/home?from=1688-shopkeeper)
+2. 打开 APP 首页，点击「一键部署开店Claw，全自动化赚钱🦞」
 3. 进入页面后复制 AK
 
 ## 配置 AK

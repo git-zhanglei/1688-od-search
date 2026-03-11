@@ -9,7 +9,7 @@ python3 {baseDir}/cli.py search --query "商品描述" [--channel 渠道]
 | 参数 | 默认 | 可选值 |
 |------|------|--------|
 | `--query` | 必填 | 自然语言描述，API 自行理解语义 |
-| `--channel` | 空字符串 `""` | douyin / pinduoduo / xiaohongshu / taobao |
+| `--channel` | 空字符串 `""` | douyin / pinduoduo / xiaohongshu / thyny（淘宝） |
 
 返回商品数量限制：默认/最多 20 个。
 当未识别到用户渠道意图时，`channel` 传空字符串 `""`（非必填）。

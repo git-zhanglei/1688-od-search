@@ -60,6 +60,9 @@ class PublishResult:
     success: bool
     published_count: int
     failed_items: List[Dict[str, Any]]
+    submitted_count: int = 0
+    fail_count: int = 0
+    all_count: int = 0
 
 
 def with_retry(max_retries: int = MAX_RETRIES):
@@ -252,9 +255,17 @@ def publish_items(item_ids: List[str], shop_code: str, channel: Optional[str] = 
         shops = list_bound_shops()
         target_shop = next((s for s in shops if s.code == shop_code), None)
         if not target_shop:
-            return PublishResult(success=False, published_count=0, failed_items=[{"error": "店铺不存在"}])
+            return PublishResult(
+                success=False,
+                published_count=0,
+                failed_items=[{"error": "店铺不存在"}],
+                submitted_count=0,
+                fail_count=0,
+                all_count=0,
+            )
         channel = CHANNEL_MAP.get(target_shop.channel, "douyin")
 
+    submitted_count = len(item_ids[:PUBLISH_LIMIT])
     body = json.dumps({
         "offerIdList": ",".join(item_ids[:PUBLISH_LIMIT]),
         "channel": channel,
@@ -263,7 +274,14 @@ def publish_items(item_ids: List[str], shop_code: str, channel: Optional[str] = 
 
     headers = get_auth_headers("POST", "/1688claw/skill/distributingoffer", body)
     if not headers:
-        return PublishResult(success=False, published_count=0, failed_items=[{"error": "AK未配置"}])
+        return PublishResult(
+            success=False,
+            published_count=0,
+            failed_items=[{"error": "AK未配置"}],
+            submitted_count=submitted_count,
+            fail_count=submitted_count,
+            all_count=submitted_count,
+        )
 
     try:
         response = requests.post(url, headers=headers, data=body, timeout=60)
@@ -272,29 +290,62 @@ def publish_items(item_ids: List[str], shop_code: str, channel: Optional[str] = 
         if result.get("success") is False:
             biz_msg = _biz_error_message(result)
             logger.error(f"铺货失败 - 业务错误: {biz_msg}")
-            return PublishResult(success=False, published_count=0, failed_items=[{"error": biz_msg}])
+            return PublishResult(
+                success=False,
+                published_count=0,
+                failed_items=[{"error": biz_msg}],
+                submitted_count=submitted_count,
+                fail_count=submitted_count,
+                all_count=submitted_count,
+            )
 
         model = result.get("model", {})
         if not isinstance(model, dict):
             logger.error("铺货失败 - model 结构异常（期望 dict）")
-            return PublishResult(success=False, published_count=0, failed_items=[{"error": "返回结构异常：model不是对象"}])
+            return PublishResult(
+                success=False,
+                published_count=0,
+                failed_items=[{"error": "返回结构异常：model不是对象"}],
+                submitted_count=submitted_count,
+                fail_count=submitted_count,
+                all_count=submitted_count,
+            )
         success = True
         model_data = model.get("data", {})
         parsed_data = model_data if isinstance(model_data, dict) else {}
 
         success_count = parsed_data.get("successCount")
         fail_count = parsed_data.get("failCount")
+        all_count = parsed_data.get("allCount")
+        published_count = int(success_count) if success_count is not None else submitted_count
 
         return PublishResult(
             success=success,
-            published_count=int(success_count) if success_count is not None else (len(item_ids[:PUBLISH_LIMIT]) if success else 0),
-            failed_items=[] if success else [{"error": f"铺货失败（failCount={fail_count if fail_count is not None else '未知'}）"}]
+            published_count=published_count,
+            failed_items=[],
+            submitted_count=submitted_count,
+            fail_count=int(fail_count) if fail_count is not None else max(submitted_count - published_count, 0),
+            all_count=int(all_count) if all_count is not None else submitted_count,
         )
 
     except requests.exceptions.HTTPError as e:
         mapped = _http_error_message(e)
         logger.error(f"铺货失败 - {mapped}")
-        return PublishResult(success=False, published_count=0, failed_items=[{"error": mapped}])
+        return PublishResult(
+            success=False,
+            published_count=0,
+            failed_items=[{"error": mapped}],
+            submitted_count=submitted_count,
+            fail_count=submitted_count,
+            all_count=submitted_count,
+        )
     except (KeyError, TypeError, ValueError) as e:
         logger.error(f"铺货失败 - 数据解析错误: {e}")
-        return PublishResult(success=False, published_count=0, failed_items=[{"error": str(e)}])
+        return PublishResult(
+            success=False,
+            published_count=0,
+            failed_items=[{"error": str(e)}],
+            submitted_count=submitted_count,
+            fail_count=submitted_count,
+            all_count=submitted_count,
+        )
