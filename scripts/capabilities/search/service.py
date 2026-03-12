@@ -132,7 +132,8 @@ def search_and_save(query: str, channel: str = "") -> dict:
     if not products:
         return {"products": [], "data_id": "", "markdown": "未找到商品，请尝试更换关键词。"}
 
-    data_id = save_search_result(products, query, channel)
+    # Persist normalized channel to keep snapshot contract consistent with API behavior.
+    data_id = save_search_result(products, query, CHANNEL_MAP.get(channel, ""))
     markdown = format_product_list(products)
 
     return {"products": products, "data_id": data_id, "markdown": markdown}

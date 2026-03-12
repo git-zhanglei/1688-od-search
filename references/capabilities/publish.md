@@ -4,7 +4,7 @@
 
 铺货前必须先通过 `shops` 命令获取目标店铺的 `shop_code`（详见 `references/capabilities/shops.md`）。
 
-铺货是**写入级操作**，必须由用户明确确认目标店铺，禁止 Agent 自动选择（即使只有 1 个店铺也需用户确认）。
+铺货是**写入级操作**。遵循 `SKILL.md` 的全局写入规则：先 dry-run；仅目标不唯一时追问；目标唯一则直接执行。
 
 ## CLI 调用
 
@@ -64,7 +64,7 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 | `fail_count` | 铺货失败数 |
 | `dry_run` | 是否为预检查模式 |
 | `risk_level` | 固定为 `"write"`，标识这是写入级操作 |
-| `confirm_prompt` | dry-run 模式下出现，Agent 需展示给用户等待确认 |
+| `confirm_prompt` | dry-run 模式下可出现；仅在目标不唯一时用于追问用户做歧义消解 |
 
 ### dry-run 预检查输出
 
@@ -85,7 +85,7 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 }
 ```
 
-**Agent 关键行为**：当 `data.risk_level` 为 `"write"` 且存在 `confirm_prompt` 时，Agent 必须展示 `confirm_prompt` 内容，等待用户明确确认后才能执行下一步。
+**Agent 关键行为**：当 `data.risk_level` 为 `"write"` 时，先 dry-run；若目标不唯一且存在 `confirm_prompt`，展示该提示做歧义消解；目标唯一则直接执行正式铺货。
 
 ## 铺货流程（Agent 执行步骤）
 
@@ -97,17 +97,17 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 
 2. 获取店铺
    └─ 运行 cli.py shops
-   └─ 若用户已在上下文中明确了目标（如"铺到拼多多"），从结果中匹配，直接展示确认（如"确认铺到「xxx拼多多店」？"）
+   └─ 若用户已在上下文中明确了目标（如"铺到拼多多"），从结果中匹配
    └─ 若用户未指定，列出所有有效店铺让用户选择
-   └─ 无论哪种方式，都必须得到用户明确确认后才继续
+   └─ 仅当目标不唯一（多个候选）时追问一次
 
 3. 执行 dry-run 预检查（必须）
    └─ 运行 cli.py publish --shop-code CODE --data-id ID --dry-run
-   └─ 展示预检结果和 confirm_prompt
+   └─ 展示预检结果；仅在目标不唯一时展示 confirm_prompt
 
-4. 等待用户明确确认
-   └─ 用户确认 → 去掉 --dry-run 执行正式铺货
-   └─ 用户拒绝 → 终止，不执行
+4. 目标判定
+   └─ 目标唯一 → 去掉 --dry-run 直接执行正式铺货
+   └─ 目标不唯一 → 追问一次，用户选定后执行
 
 5. 执行正式铺货
    └─ 运行 cli.py publish --shop-code CODE --data-id ID
@@ -124,7 +124,7 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 | 全部成功 | 恭喜用户，提示"登录对应平台后台查看已发布商品" |
 | 部分成功（有 fail_count） | 说明成功/失败数，建议"稍后重试失败的商品，或检查商品信息是否完整" |
 | 全部失败 | 展示失败原因（markdown 中有），按错误码引导（见下方错误处理） |
-| dry-run 预检查 | 展示预检结果，问用户"确认执行正式铺货吗？"，确认后去掉 `--dry-run` 重新执行 |
+| dry-run 预检查 | 展示预检结果；目标唯一则直接正式执行，目标不唯一则追问一次后执行 |
 | 店铺不存在 | 提示运行 `shops` 重新获取正确的店铺代码 |
 | 店铺授权过期 | 提示在 1688 AI版 APP 中重新授权 |
 
