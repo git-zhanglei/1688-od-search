@@ -18,51 +18,66 @@ Commands:
 import json
 import os
 import sys
+import importlib
 
-# 让 scripts/ 目录可直接 import
 SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
 
-COMMANDS = {
-    "search":    "search",
-    "shops":     "shops",
-    "publish":   "publish",
-    "configure": "configure",
-    "check":     "cmd_check",
-}
+
+def _discover_capabilities() -> dict:
+    """扫描 capabilities/*/cmd.py，自动注册命令"""
+    commands = {}
+    caps_dir = os.path.join(SCRIPTS_DIR, "capabilities")
+
+    if not os.path.isdir(caps_dir):
+        return commands
+
+    for name in sorted(os.listdir(caps_dir)):
+        cmd_path = os.path.join(caps_dir, name, "cmd.py")
+        if not os.path.isfile(cmd_path):
+            continue
+        module_path = f"capabilities.{name}.cmd"
+        try:
+            mod = importlib.import_module(module_path)
+            cmd_name = getattr(mod, 'COMMAND_NAME', name)
+            commands[cmd_name] = module_path
+        except Exception:
+            pass
+
+    return commands
 
 
-def _usage():
+def _usage(commands: dict):
+    lines = ["**1688-shopkeeper 用法**\n", "```"]
+    for name in sorted(commands):
+        try:
+            mod = importlib.import_module(commands[name])
+            desc = getattr(mod, 'COMMAND_DESC', '')
+            lines.append(f"python3 cli.py {name:<12} {desc}")
+        except Exception:
+            lines.append(f"python3 cli.py {name}")
+    lines.append("```")
+
     print(json.dumps({
         "success": False,
         "data": {},
-        "markdown": (
-            "**1688-shopkeeper 用法**\n\n"
-            "```\n"
-            "python3 cli.py search    --query \"商品描述\" [--channel douyin]\n"
-            "python3 cli.py shops\n"
-            "python3 cli.py publish   --shop-code CODE (--data-id ID | --item-ids a,b,c)\n"
-            "python3 cli.py configure YOUR_AK\n"
-            "python3 cli.py check\n"
-            "```"
-        )
+        "markdown": "\n".join(lines),
     }, ensure_ascii=False, indent=2))
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        _usage()
+    commands = _discover_capabilities()
+
+    if len(sys.argv) < 2 or sys.argv[1] not in commands:
+        _usage(commands)
         sys.exit(1)
 
     cmd = sys.argv[1]
-    module_name = COMMANDS[cmd]
+    module_path = commands[cmd]
 
-    # 把剩余参数还给子模块的 sys.argv
     sys.argv = [f"cli.py {cmd}"] + sys.argv[2:]
 
-    # 动态 import 并执行子模块的 main()
-    import importlib
-    module = importlib.import_module(module_name)
+    module = importlib.import_module(module_path)
     module.main()
 
 

@@ -24,22 +24,47 @@ metadata: {"openclaw": {"emoji": "🛒", "requires": {"env": ["ALI_1688_AK"], "b
 所有命令输出 JSON：`{"success": bool, "markdown": str, "data": {...}}`
 **展示时直接输出 `markdown` 字段，Agent 分析追加在后面，不得混入其中。**
 
-## 标准流程
+## 使用流程
 
-**选品→铺货**：`check` → `search` → 用户筛选(Agent 推荐 + 用户确认) → `shops` → `publish`
-**首次使用**：`check` → 按 data 字段分支：
-- `ak_configured: false` → 先 `configure`（优先级最高，其他命令都依赖 AK）
-- `shops_count: 0` → 引导开店
-- `expired_count > 0` → 提示重新授权
-- 全部正常 → 进入选品流程
+Agent 根据用户意图**直接执行对应命令**，无需每次先执行 `check`。
+各命令在 AK 缺失、店铺异常等情况下会自行返回明确错误，Agent 按下方「异常处理」应对即可。
 
-**刚配置 AK**：当前会话命令前加 `ALI_1688_AK=xxx`，重启 Gateway 后全局生效
+**选品铺货典型路径**：`search` → 用户筛选 → `shops`（确认目标店铺） → `publish`
 
-## 执行前置（必须）
+## 安全声明
 
-- 执行 `search` 前：先完整阅读 `references/search.md`
-- 执行 `shops` / `publish` 前：先完整阅读 `references/publish.md`
-- 执行 `configure` 前：先完整阅读 `references/configure.md`
+| 风险级别 | 命令 | Agent 行为 |
+|---------|------|-----------|
+| **只读** | search, shops, check | 直接执行 |
+| **配置** | configure | 提示影响范围后执行 |
+| **写入** | publish | **必须先 dry-run 预检查，展示确认信息，得到用户明确同意后才执行正式铺货** |
+
+**规则**：当命令输出中包含 `"risk_level": "write"` 且存在 `confirm_prompt` 时，Agent **禁止自动执行下一步**，必须将 `confirm_prompt` 展示给用户，等待用户确认。
+
+## 异常处理
+
+任何命令输出 `success: false` 时：
+
+1. **先输出 `markdown` 字段**（已包含用户可读的错误描述）
+2. **再根据关键词追加引导**：
+
+| markdown 关键词 | Agent 额外动作 |
+|----------------|--------------|
+| "AK 未配置" 或 "签名无效"/"401" | 输出下方 **AK 引导话术** |
+| "授权过期" | 提示用户在 1688 AI版 APP 中重新授权 |
+| "店铺未绑定" 或 shops 返回 0 个店铺 | 输出下方 **开店引导话术** |
+| "限流"/"429" | 建议用户等待 1-2 分钟后重试 |
+| 其他 | 仅输出 markdown 即可 |
+
+详细错误码说明见 `references/common/error-handling.md`。
+
+## 执行前置（首次命中能力时必须）
+
+- 首次执行 `search` 前：先完整阅读 `references/capabilities/search.md`
+- 首次执行 `shops` 前：先完整阅读 `references/capabilities/shops.md`
+- 首次执行 `publish` 前：先完整阅读 `references/capabilities/publish.md`
+- 首次执行 `configure` 前：先完整阅读 `references/capabilities/configure.md`
+- 同一会话内后续重复调用同一能力可复用已加载知识；仅在规则冲突或文档更新时重读。
 
 ## AK 引导话术
 
@@ -49,12 +74,13 @@ metadata: {"openclaw": {"emoji": "🛒", "requires": {"env": ["ALI_1688_AK"], "b
 
 > "还没有绑定店铺。打开 [1688 AI版APP](https://air.1688.com/kapp/1688-ai-app/pages/home?from=1688-shopkeeper) → 首页「一键开店」，开好后告诉我。"
 
-## FAQ 经营知识（按需加载）
+## FAQ 知识库（按需加载）
 
-用户问经营问题时，**先加载对应文件再回答**，不凭经验泛泛而谈。
+用户问经营或技术问题时，**先加载对应文件再回答**，不凭经验泛泛而谈。
 
 | 用户话题 | 加载文件 |
 |---------|---------|
+| AK 问题、铺货失败、支持平台、收费 | `references/faq/base.md` |
 | 选哪个平台、抖店/拼多多/淘宝 | `references/faq/platform-selection.md` |
 | 选品风险、品类、节日选品 | `references/faq/product-selection.md` |
 | 运费模板、定价、加价倍率 | `references/faq/listing-template.md` |

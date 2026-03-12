@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""
-配置状态检查命令
+"""配置状态检查命令 — CLI 入口（无 service 层，逻辑足够简单）"""
 
-检查：AK 是否配置、店铺是否绑定、数据目录是否可写
+COMMAND_NAME = "check"
+COMMAND_DESC = "检查配置状态"
 
-Usage:
-    python3 cmd_check.py
-    # 或通过统一入口
-    python3 cli.py check
-"""
-
-import json
 import os
 import sys
-from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from pathlib import Path
+from _auth import get_ak_from_env
+from _output import print_output
 from _const import DATA_DIR
 
 
@@ -23,10 +19,11 @@ def check_status() -> dict:
     lines = []
     ok = True
 
-    # 1. AK
-    ak = os.environ.get("ALI_1688_AK", "")
-    if ak:
-        lines.append(f"✅ AK 已配置: {ak[:4]}****{ak[-4:]}")
+    # 1. AK（环境变量 → session 文件 fallback）
+    ak_id, _ = get_ak_from_env()
+    if ak_id:
+        masked = f"{ak_id[:4]}****{ak_id[-4:]}" if len(ak_id) >= 8 else "****"
+        lines.append(f"✅ AK 已配置: {masked}")
         ak_ok = True
     else:
         lines.append("❌ AK 未配置 — 运行: `cli.py configure YOUR_AK`")
@@ -38,7 +35,7 @@ def check_status() -> dict:
     expired_count = 0
     if ak_ok:
         try:
-            from _api import list_bound_shops
+            from capabilities.shops.service import list_bound_shops
             shops = list_bound_shops()
             shops_count = len(shops)
             expired_count = sum(1 for s in shops if not s.is_authorized)
@@ -60,7 +57,9 @@ def check_status() -> dict:
         ok = False
 
     status_icon = "✅ 一切正常" if ok else "⚠️  有问题需处理"
-    markdown = f"## 1688-shopkeeper 状态检查\n\n" + "\n".join(f"- {l}" for l in lines) + f"\n\n**{status_icon}**"
+    markdown = ("## 1688-shopkeeper 状态检查\n\n"
+                + "\n".join(f"- {l}" for l in lines)
+                + f"\n\n**{status_icon}**")
 
     return {
         "success": ok,
@@ -75,7 +74,7 @@ def check_status() -> dict:
 
 def main():
     result = check_status()
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print_output(result["success"], result["markdown"], result["data"])
 
 
 if __name__ == "__main__":

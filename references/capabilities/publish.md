@@ -1,51 +1,22 @@
 # 铺货指南
 
-## 前置：查询店铺
+## 前置
 
-铺货前必须先获取目标店铺的 `shop_code`：
+铺货前必须先通过 `shops` 命令获取目标店铺的 `shop_code`（详见 `references/capabilities/shops.md`）。
 
-```bash
-python3 {baseDir}/cli.py shops
-```
-
-CLI 输出：
-
-```json
-{
-  "success": true,
-  "markdown": "你共绑定了 **2** 个店铺：\n\n| # | 店铺 | 平台 | 状态 | 店铺代码 |\n...",
-  "data": {
-    "total": 2,
-    "valid_count": 1,
-    "expired_count": 1,
-    "shops": [
-      {"code": "260391138", "name": "我的抖店", "channel": "douyin", "is_authorized": true},
-      {"code": "123456789", "name": "拼多多小店", "channel": "pinduoduo", "is_authorized": false}
-    ]
-  }
-}
-```
-
-### 店铺选择规则
-
-| 场景 | Agent 操作 |
-|------|-----------|
-| 仅 1 个有效店铺 | 自动选择，无需询问用户 |
-| 多个有效店铺 | 列出店铺表格，让用户选择 |
-| 0 个店铺 | 输出开店引导话术（见 SKILL.md） |
-| 有店铺但全部 `is_authorized: false` | 提示"店铺授权已过期，请在 [1688 AI版APP](https://air.1688.com/kapp/1688-ai-app/pages/home?from=1688-shopkeeper) 中重新授权" |
+铺货是**写入级操作**，必须由用户明确确认目标店铺，禁止 Agent 自动选择（即使只有 1 个店铺也需用户确认）。
 
 ## CLI 调用
 
 ```bash
 # 方式一：用选品 data_id 铺全部（整批）
-python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143022"
+python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143022_123"
 
 # 方式二：指定商品 ID（用户筛选后）
 python3 {baseDir}/cli.py publish --shop-code "260391138" --item-ids "991122553819,894138137003"
 
 # 加 --dry-run 仅预检查不执行
-python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143022" --dry-run
+python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143022_123" --dry-run
 ```
 
 | 参数 | 说明 |
@@ -53,7 +24,7 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 | `--shop-code` | 必填，目标店铺代码（从 `cli.py shops` 的 `data.shops[].code` 获取） |
 | `--data-id` | 选品快照 ID（与 `--item-ids` 二选一），铺该批次全部商品 |
 | `--item-ids` | 逗号分隔的商品 ID（与 `--data-id` 二选一，最多 20 个） |
-| `--dry-run` | 可选，仅预检查不执行实际铺货 |
+| `--dry-run` | 预检查模式，不执行实际铺货。**首次铺货必须先 dry-run** |
 
 ### data-id 与 item-ids 怎么选
 
@@ -79,7 +50,8 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
     "submitted_count": 20,
     "success_count": 12,
     "fail_count": 8,
-    "dry_run": false
+    "dry_run": false,
+    "risk_level": "write"
   }
 }
 ```
@@ -91,6 +63,8 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 | `success_count` | 铺货成功数 |
 | `fail_count` | 铺货失败数 |
 | `dry_run` | 是否为预检查模式 |
+| `risk_level` | 固定为 `"write"`，标识这是写入级操作 |
+| `confirm_prompt` | dry-run 模式下出现，Agent 需展示给用户等待确认 |
 
 ### dry-run 预检查输出
 
@@ -104,10 +78,14 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
     "submitted_count": 20,
     "success_count": 0,
     "fail_count": 0,
-    "dry_run": true
+    "dry_run": true,
+    "risk_level": "write",
+    "confirm_prompt": "确认铺货 20 个商品到目标店铺？去掉 --dry-run 执行正式铺货。"
   }
 }
 ```
+
+**Agent 关键行为**：当 `data.risk_level` 为 `"write"` 且存在 `confirm_prompt` 时，Agent 必须展示 `confirm_prompt` 内容，等待用户明确确认后才能执行下一步。
 
 ## 铺货流程（Agent 执行步骤）
 
@@ -119,18 +97,25 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 
 2. 获取店铺
    └─ 运行 cli.py shops
-   └─ 按"店铺选择规则"确定 shop_code
+   └─ 若用户已在上下文中明确了目标（如"铺到拼多多"），从结果中匹配，直接展示确认（如"确认铺到「xxx拼多多店」？"）
+   └─ 若用户未指定，列出所有有效店铺让用户选择
+   └─ 无论哪种方式，都必须得到用户明确确认后才继续
 
-3. 向用户确认
-   "确认铺货信息：
-   - 商品：X 个
-   - 目标店铺：[平台] 店铺名
-   确认执行吗？"
+3. 执行 dry-run 预检查（必须）
+   └─ 运行 cli.py publish --shop-code CODE --data-id ID --dry-run
+   └─ 展示预检结果和 confirm_prompt
 
-4. 执行铺货（或 dry-run 预检查）
+4. 等待用户明确确认
+   └─ 用户确认 → 去掉 --dry-run 执行正式铺货
+   └─ 用户拒绝 → 终止，不执行
 
-5. 展示结果：原样输出 markdown，然后根据结果引导下一步（见下方）
+5. 执行正式铺货
+   └─ 运行 cli.py publish --shop-code CODE --data-id ID
+
+6. 展示结果：原样输出 markdown，然后根据结果引导下一步（见下方）
 ```
+
+**禁止**：跳过 dry-run 直接执行正式铺货。
 
 ## 结果处理与下一步引导
 
@@ -152,9 +137,11 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 
 ## 异常处理
 
+通用 HTTP 异常（400/401/429/500）处理见 `references/common/error-handling.md`。
+
+本能力特有异常：
+
 | 场景 | 表现 | Agent 应对 |
 |------|------|-----------|
-| API 失败 | `success: false` + 错误描述 | `400` 检查参数；`401` 引导重新配置 AK；`429` 建议稍后重试；`500` 服务异常，稍后重试 |
 | data_id 找不到 | `"未找到 data_id=... 对应的选品结果"` | 提示用户重新搜索获取新的 data_id |
 | 商品 ID 为空 | `"没有可用的商品ID"` | 检查 --item-ids 或 --data-id 是否正确 |
-| 网络异常 | `"铺货失败（网络异常，已重试3次）"` | 建议检查网络后重试 |

@@ -17,16 +17,13 @@ CHANNEL_MAP: dict[str, str] = {
     "thyny":        "thyny",
     "taobao":       "thyny",       # taobao 在 API 侧叫 thyny
 
-    # 中文别名（用户自然语言）
+    # 中文别名（shops API 返回的 channel 可能含中文，此处做映射；CLI 不会传入中文）
     "抖音":         "douyin",
     "抖店":         "douyin",
     "拼多多":       "pinduoduo",
     "小红书":       "xiaohongshu",
     "淘宝":         "thyny",
 }
-
-# 默认渠道
-DEFAULT_CHANNEL = "douyin"
 
 # Skill 版本
 SKILL_VERSION = "1.0.0"

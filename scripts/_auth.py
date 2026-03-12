@@ -43,9 +43,34 @@ def extract_ak_keys(raw_input: str) -> Tuple[Optional[str], Optional[str]]:
     return access_key_id, access_key_secret
 
 
+AK_SESSION_FILE = os.path.join(os.path.expanduser("~"), ".openclaw", ".ak_session")
+
+
+def save_ak_to_session(ak: str):
+    """将 AK 写入 session 文件，供当前会话后续命令自动读取"""
+    try:
+        os.makedirs(os.path.dirname(AK_SESSION_FILE), exist_ok=True)
+        with open(AK_SESSION_FILE, "w") as f:
+            f.write(ak)
+    except OSError:
+        pass
+
+
+def _read_ak_from_session() -> Optional[str]:
+    """从 session 文件读取 AK"""
+    try:
+        with open(AK_SESSION_FILE, "r") as f:
+            ak = f.read().strip()
+        return ak if ak else None
+    except (OSError, IOError):
+        return None
+
+
 def get_ak_from_env() -> Tuple[Optional[str], Optional[str]]:
-    """从环境变量获取 AK"""
+    """获取 AK：环境变量优先，其次 session 文件"""
     raw_input = os.environ.get("ALI_1688_AK")
+    if not raw_input:
+        raw_input = _read_ak_from_session()
     if not raw_input:
         return None, None
     return extract_ak_keys(raw_input)
