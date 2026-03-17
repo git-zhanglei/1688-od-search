@@ -16,7 +16,7 @@ metadata: {"openclaw": {"emoji": "🛒", "requires": {"bins": ["python3"]}, "pri
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
-| `search` | 搜商品 | `cli.py search --query "连衣裙" --channel douyin` |
+| `search` | 找商品 | `cli.py search --query "帮我找1688上支持一件代发包邮的露营椅，100元以内" --channel douyin` |
 | `shops` | 查绑定店铺 | `cli.py shops` |
 | `publish` | 铺货 | `cli.py publish --shop-code CODE --data-id ID` |
 | `opportunities` | 商机热榜 | `cli.py opportunities` |
