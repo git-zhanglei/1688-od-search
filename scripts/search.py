@@ -12,7 +12,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Set, Tuple
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -133,28 +133,99 @@ def detect_bulk_intent(query: str) -> Dict[str, Optional[int]]:
     return {"auto_batch": False, "target_count": None, "reason": "default_single_batch"}
 
 
-def search_products_best_effort(query: str, channel: str, target_count: int, max_rounds: int = 3) -> List[Product]:
+def _trim_redundant_tokens(text: str) -> str:
+    """移除批量意图提示词，保留商品语义主干。"""
+    patterns = [
+        r"批量",
+        r"多找一些",
+        r"多来点",
+        r"尽量多",
+        r"尽可能多",
+        r"大量",
+        r"海量",
+    ]
+    cleaned = text
+    for p in patterns:
+        cleaned = re.sub(p, "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def build_query_variants(query: str) -> List[str]:
+    """
+    平衡扩量策略：保留原query优先，补充2个轻量变体。
+    - 变体1：去批量修饰后的核心query
+    - 变体2：在核心query后补充采购意图词（厂家批发）
+    """
+    variants: List[str] = []
+
+    def add_variant(v: str):
+        vv = re.sub(r"\s+", " ", v).strip()
+        if vv and vv not in variants:
+            variants.append(vv)
+
+    add_variant(query)
+    core_query = _trim_redundant_tokens(query)
+    add_variant(core_query)
+    if core_query:
+        add_variant(f"{core_query} 厂家批发")
+
+    # 平衡策略上限3个，控制相关性与请求量
+    return variants[:3]
+
+
+def search_products_best_effort(
+    query: str,
+    channel: str,
+    target_count: int,
+    max_rounds: int = 3,
+) -> Tuple[List[Product], Dict[str, Any]]:
     """
     仅在批量意图下启用：多轮搜索 + 去重聚合（受接口限制，不保证一定达到目标数）。
     """
     merged: Dict[str, Product] = {}
+    variants = build_query_variants(query)
+    hit_variants: Set[str] = set()
+    dedup_count = 0
+    exhausted_without_growth = False
+    no_growth_rounds = 0
+    no_growth_round_threshold = 2
+
     for _ in range(max_rounds):
-        current = search_products(query, channel)
-        if not current:
-            break
-        new_added = 0
-        for p in current:
-            if p.id in merged:
+        growth_in_round = 0
+        for variant in variants:
+            current = search_products(variant, channel)
+            if not current:
                 continue
-            merged[p.id] = p
-            new_added += 1
+            for p in current:
+                if p.id in merged:
+                    dedup_count += 1
+                    continue
+                merged[p.id] = p
+                hit_variants.add(variant)
+                growth_in_round += 1
+                if len(merged) >= target_count:
+                    break
             if len(merged) >= target_count:
                 break
+
         if len(merged) >= target_count:
             break
-        if new_added == 0:
-            break
-    return list(merged.values())
+        if growth_in_round == 0:
+            no_growth_rounds += 1
+            if no_growth_rounds >= no_growth_round_threshold:
+                exhausted_without_growth = True
+                break
+        else:
+            no_growth_rounds = 0
+
+    meta_debug = {
+        "variant_count": len(variants),
+        "hit_variants": list(hit_variants),
+        "dedup_count": dedup_count,
+        "exhausted_without_growth": exhausted_without_growth,
+    }
+    return list(merged.values()), meta_debug
 
 
 def search_and_save(query: str, channel: str = "") -> dict:
@@ -166,8 +237,14 @@ def search_and_save(query: str, channel: str = "") -> dict:
     """
     intent = detect_bulk_intent(query)
     target_count = int(intent["target_count"] or SEARCH_LIMIT)
+    debug_meta: Dict[str, Any] = {
+        "variant_count": 1,
+        "hit_variants": [],
+        "dedup_count": 0,
+        "exhausted_without_growth": False,
+    }
     if intent["auto_batch"]:
-        products = search_products_best_effort(query, channel, target_count=target_count)
+        products, debug_meta = search_products_best_effort(query, channel, target_count=target_count)
     else:
         products = search_products(query, channel)
 
@@ -182,6 +259,10 @@ def search_and_save(query: str, channel: str = "") -> dict:
         "auto_batch_requested": bool(intent["auto_batch"]),
         "target_count": target_count if intent["auto_batch"] else None,
         "reason": intent["reason"],
+        "variant_count": debug_meta["variant_count"] if intent["auto_batch"] else 1,
+        "hit_variants": debug_meta["hit_variants"] if intent["auto_batch"] else [],
+        "dedup_count": debug_meta["dedup_count"] if intent["auto_batch"] else 0,
+        "exhausted_without_growth": debug_meta["exhausted_without_growth"] if intent["auto_batch"] else False,
     }
     data_id = save_search_result(products, query, channel, meta=meta)
     markdown = format_product_list(products)

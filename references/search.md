@@ -14,7 +14,8 @@ python3 {baseDir}/cli.py search --query "商品描述" [--channel 渠道]
 默认最多返回 20 个商品。
 
 当用户 query 明确表达批量意图（例如“找 50 个”“批量多找一些”）时，会自动进入“尽力扩量”模式：
-- 进行有限轮次搜索并按商品 ID 去重聚合；
+- 先以原 query 搜索，再生成 2~3 个轻量 query 变体进行有限轮次聚合；
+- 对聚合结果按商品 ID 去重；
 - 目标数量优先按用户表达的数量；若仅有批量语义无明确数字，默认目标为 40；
 - 受外部接口限制（无分页/游标），不保证稳定达到目标数量。
 
@@ -29,6 +30,15 @@ Agent 收到的 CLI 标准输出：
   "data": {
     "data_id": "20260305_143022",
     "product_count": 18,
+    "meta": {
+      "auto_batch_requested": true,
+      "target_count": 40,
+      "reason": "bulk_keyword",
+      "variant_count": 3,
+      "hit_variants": ["批量多找一些可一件代发的水杯", "可一件代发的水杯"],
+      "dedup_count": 16,
+      "exhausted_without_growth": false
+    },
     "products": [
       {
         "id": "991122553819",
