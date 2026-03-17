@@ -2,9 +2,10 @@
 name: 1688-shopkeeper
 description: |
   1688选品铺货 + 商机趋势专家。用于：(1) 在1688搜索商品/选品找货源 (2) 查询已绑定的下游店铺
-  (3) 将商品铺货到抖音/拼多多/小红书/淘宝等平台 (4) 配置1688 AK密钥 (5) 查看即时商机热榜
-  (6) 查看类目/行业趋势与价格分布。
-  触发词：帮我找商品、在1688搜、选品、铺货、上架、查店铺、配置AK、商机、热榜、排行榜、趋势、价格分布、1688找货。
+  (3) 查询商品详情/SKU/类目/商家信息 (4) 将商品铺货到抖音/拼多多/小红书/淘宝等平台
+  (5) 配置1688 AK密钥 (6) 查看即时商机热榜 (7) 查看类目/行业趋势与价格分布。
+  触发词：帮我找商品、在1688搜、选品、商品详情、商详、看这个商品信息、SKU、类目、商家信息、
+  铺货、上架、查店铺、配置AK、商机、热榜、排行榜、趋势、价格分布、1688找货。
 metadata: {"openclaw": {"emoji": "🛒", "requires": {"bins": ["python3"]}, "primaryEnv": "ALI_1688_AK"}}
 ---
 
@@ -17,6 +18,7 @@ metadata: {"openclaw": {"emoji": "🛒", "requires": {"bins": ["python3"]}, "pri
 | 命令 | 说明 | 示例 |
 |------|------|------|
 | `search` | 找商品 | `cli.py search --query "帮我找1688上支持一件代发包邮的露营椅，100元以内" --channel douyin` |
+| `prod_detail` | 商品详情 | `cli.py prod_detail --item-ids "991122553819,894138137003"` |
 | `shops` | 查绑定店铺 | `cli.py shops` |
 | `publish` | 铺货 | `cli.py publish --shop-code CODE --data-id ID` |
 | `opportunities` | 商机热榜 | `cli.py opportunities` |
@@ -34,6 +36,10 @@ Agent 根据用户意图**直接执行对应命令**，无需每次先执行 `ch
 
 **选品铺货典型路径**：`search` → 用户筛选 → `shops`（确认目标店铺） → `publish`
 
+**商品详情使用指引**：
+- `prod_detail`：用户想看商品标题、价格、类目、SKU、CPV 属性、商家信息时使用。
+- 优先先抓取并保存；只有在用户明确需要详细内容或分析时，再按 `data_id` 按需读取，避免将大段商详直接带入 prompt。
+
 **商机/趋势使用指引**：
 - `opportunities`：用户想看“此刻/近1小时/热榜/趋势商机”。
 - `trend`：用户询问某宽泛类目/行业的周期趋势、价格分布、热品概况；关键词过长或过细时先按用户原词尝试，若空结果再提示用户换更宽泛/拆分词后重试。
@@ -42,7 +48,7 @@ Agent 根据用户意图**直接执行对应命令**，无需每次先执行 `ch
 
 | 风险级别 | 命令 | Agent 行为 |
 |---------|------|-----------|
-| **只读** | search, shops, check, opportunities, trend | 直接执行 |
+| **只读** | search, prod_detail, shops, check, opportunities, trend | 直接执行 |
 | **配置** | configure | 提示影响范围后执行 |
 | **写入** | publish | **必须先 dry-run 预检查；仅当写入目标不唯一时追问，目标唯一则直接执行** |
 
@@ -71,6 +77,7 @@ Agent 根据用户意图**直接执行对应命令**，无需每次先执行 `ch
 ## 执行前置（首次命中能力时必须）
 
 - 首次执行 `search` 前：先完整阅读 `references/capabilities/search.md`
+- 首次执行 `prod_detail` 前：先完整阅读 `references/capabilities/prod_detail.md`
 - 首次执行 `shops` 前：先完整阅读 `references/capabilities/shops.md`
 - 首次执行 `publish` 前：先完整阅读 `references/capabilities/publish.md`
 - 首次执行 `configure` 前：先完整阅读 `references/capabilities/configure.md`
