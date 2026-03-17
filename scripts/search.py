@@ -9,17 +9,18 @@ Usage:
 import argparse
 import os
 import json
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Dict
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _api import search_products, Product
-from _const import DATA_DIR
+from _const import DATA_DIR, SEARCH_LIMIT
 
 
-def save_search_result(products: List[Product], query: str, channel: str) -> str:
+def save_search_result(products: List[Product], query: str, channel: str, meta: Optional[Dict] = None) -> str:
     """
     保存搜索结果到文件（含完整 stats）
 
@@ -50,6 +51,8 @@ def save_search_result(products: List[Product], query: str, channel: str) -> str
         "data_id": data_id,
         "products": products_map,
     }
+    if meta:
+        data["meta"] = meta
 
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -93,6 +96,67 @@ def format_product_list(products: List[Product], max_show: int = 20) -> str:
     return "\n".join(lines)
 
 
+def detect_bulk_intent(query: str) -> Dict[str, Optional[int]]:
+    """
+    从自然语言 query 里识别“批量（>20）”意图。
+    默认不触发，确保旧行为不变。
+    """
+    # 显式数量：如“铺50个”“找30款”
+    number_patterns = [
+        r"(?:搜|搜索|找|选|铺|铺货|上架|发布|来)\s*(\d{2,4})\s*(?:个|款|件|品|sku|SKU)",
+        r"(\d{2,4})\s*(?:个|款|件|品)\s*(?:商品|货|sku|SKU)?",
+    ]
+    for pattern in number_patterns:
+        m = re.search(pattern, query)
+        if not m:
+            continue
+        count = int(m.group(1))
+        if count > SEARCH_LIMIT:
+            return {"auto_batch": True, "target_count": count, "reason": "explicit_number"}
+
+    # 隐式批量语义：如“批量上架”“尽量多找一些”
+    keyword_patterns = [
+        "批量",
+        "多铺",
+        "多上架",
+        "尽量多",
+        "尽可能多",
+        "多找一些",
+        "多来点",
+        "大量",
+        "海量",
+        "铺满",
+    ]
+    if any(k in query for k in keyword_patterns):
+        return {"auto_batch": True, "target_count": SEARCH_LIMIT * 2, "reason": "bulk_keyword"}
+
+    return {"auto_batch": False, "target_count": None, "reason": "default_single_batch"}
+
+
+def search_products_best_effort(query: str, channel: str, target_count: int, max_rounds: int = 3) -> List[Product]:
+    """
+    仅在批量意图下启用：多轮搜索 + 去重聚合（受接口限制，不保证一定达到目标数）。
+    """
+    merged: Dict[str, Product] = {}
+    for _ in range(max_rounds):
+        current = search_products(query, channel)
+        if not current:
+            break
+        new_added = 0
+        for p in current:
+            if p.id in merged:
+                continue
+            merged[p.id] = p
+            new_added += 1
+            if len(merged) >= target_count:
+                break
+        if len(merged) >= target_count:
+            break
+        if new_added == 0:
+            break
+    return list(merged.values())
+
+
 def search_and_save(query: str, channel: str = "") -> dict:
     """
     搜索并保存结果
@@ -100,7 +164,12 @@ def search_and_save(query: str, channel: str = "") -> dict:
     Returns:
         {"products": List[Product], "data_id": str, "markdown": str}
     """
-    products = search_products(query, channel)
+    intent = detect_bulk_intent(query)
+    target_count = int(intent["target_count"] or SEARCH_LIMIT)
+    if intent["auto_batch"]:
+        products = search_products_best_effort(query, channel, target_count=target_count)
+    else:
+        products = search_products(query, channel)
 
     if not products:
         return {
@@ -109,13 +178,25 @@ def search_and_save(query: str, channel: str = "") -> dict:
             "markdown": "未找到商品，请尝试更换关键词。",
         }
 
-    data_id = save_search_result(products, query, channel)
+    meta = {
+        "auto_batch_requested": bool(intent["auto_batch"]),
+        "target_count": target_count if intent["auto_batch"] else None,
+        "reason": intent["reason"],
+    }
+    data_id = save_search_result(products, query, channel, meta=meta)
     markdown = format_product_list(products)
+    if intent["auto_batch"]:
+        markdown += (
+            "\n\n> 已启用批量意图模式："
+            f"目标约 {target_count} 个；当前聚合到 {len(products)} 个。"
+            "受搜索接口限制，可能无法稳定达到目标数量。"
+        )
 
     return {
         "products": products,
         "data_id": data_id,
         "markdown": markdown,
+        "meta": meta,
     }
 
 
@@ -153,6 +234,7 @@ def main():
                 "data_id": result["data_id"],
                 "product_count": len(result["products"]),
                 "products": [_product_to_dict(p) for p in result["products"]],
+                "meta": result.get("meta", {}),
             },
         }
     except Exception as e:

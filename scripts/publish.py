@@ -11,6 +11,7 @@ import argparse
 import os
 import json
 import sys
+import math
 from typing import List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -48,7 +49,26 @@ def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
         return None
 
 
-def format_publish_result(result: PublishResult, shop_name: str = "", origin_count: int = 0) -> str:
+def load_search_meta_by_data_id(data_id: str) -> dict:
+    """读取 data_id 对应搜索结果里的元信息（不存在时返回空 dict）"""
+    filepath = os.path.join(DATA_DIR, f"1688_{data_id}.json")
+    if not os.path.exists(filepath):
+        return {}
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        meta = data.get("meta", {})
+        return meta if isinstance(meta, dict) else {}
+    except Exception:
+        return {}
+
+
+def format_publish_result(
+    result: PublishResult,
+    shop_name: str = "",
+    origin_count: int = 0,
+    auto_batch: bool = False,
+) -> str:
     """
     格式化铺货结果为 Markdown
     
@@ -70,7 +90,9 @@ def format_publish_result(result: PublishResult, shop_name: str = "", origin_cou
             lines.append(f"- 本次提交：{result.submitted_count} 个")
         if result.fail_count:
             lines.append(f"- 失败：{result.fail_count} 个")
-        if origin_count > PUBLISH_LIMIT:
+        if auto_batch and result.submitted_count > PUBLISH_LIMIT:
+            lines.append(f"- 批量模式：已自动分 {math.ceil(result.submitted_count / PUBLISH_LIMIT)} 批提交")
+        elif origin_count > PUBLISH_LIMIT:
             lines.append(f"- ⚠️ 检测到商品总数 {origin_count}，按接口限制仅提交前 {PUBLISH_LIMIT} 个")
         lines.append("")
         lines.append("请登录对应平台后台查看已发布的商品。")
@@ -81,7 +103,9 @@ def format_publish_result(result: PublishResult, shop_name: str = "", origin_cou
             lines.append(f"- 本次提交：{result.submitted_count} 个")
         if result.fail_count:
             lines.append(f"- 失败：{result.fail_count} 个")
-        if origin_count > PUBLISH_LIMIT:
+        if auto_batch and result.submitted_count > PUBLISH_LIMIT:
+            lines.append(f"- 批量模式：已自动分 {math.ceil(result.submitted_count / PUBLISH_LIMIT)} 批提交")
+        elif origin_count > PUBLISH_LIMIT:
             lines.append(f"- ⚠️ 检测到商品总数 {origin_count}，按接口限制仅提交前 {PUBLISH_LIMIT} 个")
         lines.append("")
         
@@ -100,7 +124,12 @@ def format_publish_result(result: PublishResult, shop_name: str = "", origin_cou
     return "\n".join(lines)
 
 
-def publish_with_check(item_ids: List[str], shop_code: str, dry_run: bool = False) -> dict:
+def publish_with_check(
+    item_ids: List[str],
+    shop_code: str,
+    dry_run: bool = False,
+    auto_batch: bool = False,
+) -> dict:
     """
     带检查的铺货（便捷函数）
     
@@ -132,14 +161,17 @@ def publish_with_check(item_ids: List[str], shop_code: str, dry_run: bool = Fals
         }
 
     origin_count = len(item_ids)
+    auto_batch = bool(auto_batch and origin_count > PUBLISH_LIMIT)
     if dry_run:
-        preview_count = min(origin_count, PUBLISH_LIMIT)
+        preview_count = origin_count if auto_batch else min(origin_count, PUBLISH_LIMIT)
+        preview_batches = math.ceil(preview_count / PUBLISH_LIMIT) if preview_count else 0
         markdown = (
             "## 铺货预检查结果\n\n"
             f"✅ 店铺校验通过：{target_shop.name}\n"
             f"- 来源商品数：{origin_count}\n"
             f"- 实际将提交：{preview_count}\n"
-            + (f"- ⚠️ 超出接口限制，仅会提交前 {PUBLISH_LIMIT} 个\n" if origin_count > PUBLISH_LIMIT else "")
+            + (f"- 批量模式：预计分 {preview_batches} 批提交（每批最多 {PUBLISH_LIMIT} 个）\n" if auto_batch else "")
+            + (f"- ⚠️ 超出接口限制，仅会提交前 {PUBLISH_LIMIT} 个\n" if (origin_count > PUBLISH_LIMIT and not auto_batch) else "")
             + "\n确认后去掉 `--dry-run` 执行正式铺货。"
         )
         return {
@@ -154,6 +186,7 @@ def publish_with_check(item_ids: List[str], shop_code: str, dry_run: bool = Fals
                 all_count=origin_count,
             ),
             "origin_count": origin_count,
+            "auto_batch": auto_batch,
         }
 
     channel = CHANNEL_MAP.get(target_shop.channel)
@@ -164,14 +197,42 @@ def publish_with_check(item_ids: List[str], shop_code: str, dry_run: bool = Fals
             "result": PublishResult(success=False, published_count=0, failed_items=[{"error": f"未知渠道: {target_shop.channel}"}]),
             "origin_count": origin_count,
         }
-    result = publish_items(item_ids, shop_code, channel=channel)
-    markdown = format_publish_result(result, target_shop.name, origin_count=origin_count)
+    if auto_batch:
+        total_submitted = 0
+        total_published = 0
+        total_fail = 0
+        total_all = 0
+        failed_items = []
+        for i in range(0, origin_count, PUBLISH_LIMIT):
+            chunk = item_ids[i:i + PUBLISH_LIMIT]
+            if not chunk:
+                break
+            chunk_result = publish_items(chunk, shop_code, channel=channel)
+            total_submitted += chunk_result.submitted_count
+            total_published += chunk_result.published_count
+            total_fail += chunk_result.fail_count
+            total_all += chunk_result.all_count
+            if chunk_result.failed_items:
+                failed_items.extend(chunk_result.failed_items)
+
+        result = PublishResult(
+            success=total_published > 0,
+            published_count=total_published,
+            failed_items=failed_items,
+            submitted_count=total_submitted,
+            fail_count=total_fail,
+            all_count=total_all or total_submitted,
+        )
+    else:
+        result = publish_items(item_ids, shop_code, channel=channel)
+    markdown = format_publish_result(result, target_shop.name, origin_count=origin_count, auto_batch=auto_batch)
     
     return {
         "success": result.success,
         "markdown": markdown,
         "result": result,
         "origin_count": origin_count,
+        "auto_batch": auto_batch,
     }
 
 
@@ -200,6 +261,7 @@ def main():
 
     if args.data_id:
         item_ids = load_products_by_data_id(args.data_id)
+        search_meta = load_search_meta_by_data_id(args.data_id)
         if not item_ids:
             print(json.dumps({
                 "success": False,
@@ -209,8 +271,14 @@ def main():
             sys.exit(1)
     else:
         item_ids = [x.strip() for x in args.item_ids.split(",") if x.strip()]
+        search_meta = {}
 
     item_ids = normalize_item_ids(item_ids)
+    meta_auto_batch = bool(search_meta.get("auto_batch_requested", False))
+    force_auto_batch = bool(args.item_ids and len(item_ids) > PUBLISH_LIMIT)
+    auto_batch = bool((meta_auto_batch or force_auto_batch) and len(item_ids) > PUBLISH_LIMIT)
+    if not auto_batch and len(item_ids) > PUBLISH_LIMIT:
+        item_ids = item_ids[:PUBLISH_LIMIT]
 
     if not item_ids:
         print(json.dumps({
@@ -221,8 +289,8 @@ def main():
         sys.exit(1)
 
     try:
-        result = publish_with_check(item_ids, args.shop_code, dry_run=args.dry_run)
-        submitted_count = min(result["origin_count"], PUBLISH_LIMIT)
+        result = publish_with_check(item_ids, args.shop_code, dry_run=args.dry_run, auto_batch=auto_batch)
+        submitted_count = result["result"].submitted_count
         fail_count = result["result"].fail_count
         success_count = result["result"].published_count
         output = {
@@ -235,6 +303,7 @@ def main():
                 "success_count": success_count,
                 "fail_count": fail_count,
                 "dry_run": args.dry_run,
+                "auto_batch": auto_batch,
             },
         }
     except Exception as e:

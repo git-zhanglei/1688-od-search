@@ -52,7 +52,7 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 |------|------|
 | `--shop-code` | 必填，目标店铺代码（从 `cli.py shops` 的 `data.shops[].code` 获取） |
 | `--data-id` | 选品快照 ID（与 `--item-ids` 二选一），铺该批次全部商品 |
-| `--item-ids` | 逗号分隔的商品 ID（与 `--data-id` 二选一，最多 20 个） |
+| `--item-ids` | 逗号分隔的商品 ID（与 `--data-id` 二选一） |
 | `--dry-run` | 可选，仅预检查不执行实际铺货 |
 
 ### data-id 与 item-ids 怎么选
@@ -87,7 +87,7 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 | data 字段 | 含义 |
 |-----------|------|
 | `origin_count` | 来源商品总数（data_id 或 item-ids 解析后） |
-| `submitted_count` | 实际提交数（最多 20，受接口限制） |
+| `submitted_count` | 实际提交总数（默认最多 20；命中批量意图时可按 20/批自动循环） |
 | `success_count` | 铺货成功数 |
 | `fail_count` | 铺货失败数 |
 | `dry_run` | 是否为预检查模式 |
@@ -145,8 +145,9 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 
 ## 限制
 
-- 单次最多 20 个商品
-- 超出 20 个时仅提交前 20 个，结果中会明确提示
+- 单次接口调用最多 20 个商品
+- 默认行为保持不变：未命中批量意图时，仅提交前 20 个
+- 命中批量意图时（来自 search 结果元信息，或直接传入 `--item-ids` 且数量 > 20），会自动按 20/批循环提交
 - 店铺必须授权有效
 - API 调用频率受 1688 平台限制
 
