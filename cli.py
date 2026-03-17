@@ -9,6 +9,7 @@ Commands:
     search      文字搜商品      python3 cli.py search --query "连衣裙" [--channel douyin]
     shops       查绑定店铺      python3 cli.py shops
     publish     铺货           python3 cli.py publish --shop-code XXX (--data-id YYY | --item-ids a,b)
+    summary     运营小结         python3 cli.py summary
     configure   配置AK         python3 cli.py configure YOUR_AK
     check       检查配置状态    python3 cli.py check
 
@@ -27,6 +28,7 @@ COMMANDS = {
     "search":    "search",
     "shops":     "shops",
     "publish":   "publish",
+    "summary":   "summary",
     "configure": "configure",
     "check":     "cmd_check",
 }
@@ -42,6 +44,7 @@ def _usage():
             "python3 cli.py search    --query \"商品描述\" [--channel douyin]\n"
             "python3 cli.py shops\n"
             "python3 cli.py publish   --shop-code CODE (--data-id ID | --item-ids a,b,c)\n"
+            "python3 cli.py summary\n"
             "python3 cli.py configure YOUR_AK\n"
             "python3 cli.py check\n"
             "```"

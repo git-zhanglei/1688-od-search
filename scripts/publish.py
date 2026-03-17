@@ -11,11 +11,13 @@ import argparse
 import os
 import json
 import sys
+from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _api import publish_items, list_bound_shops, PublishResult
-from _const import CHANNEL_MAP, DATA_DIR, PUBLISH_LIMIT
+from _const import CHANNEL_MAP, DATA_DIR, PUBLISH_LIMIT, PUBLISH_DATA_DIR
 
 
 def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
@@ -46,6 +48,40 @@ def load_products_by_data_id(data_id: str) -> Optional[List[str]]:
         return []
     except Exception:
         return None
+
+
+def save_publish_event(
+    result: PublishResult,
+    shop_code: str,
+    origin_count: int,
+    dry_run: bool,
+) -> str:
+    """
+    保存铺货执行事件（用于日报统计）
+
+    Returns:
+        event_id (时间戳格式)
+    """
+    Path(PUBLISH_DATA_DIR).mkdir(parents=True, exist_ok=True)
+
+    event_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(PUBLISH_DATA_DIR, f"publish_{event_id}.json")
+
+    payload = {
+        "event_id": event_id,
+        "timestamp": datetime.now().isoformat(),
+        "shop_code": shop_code,
+        "dry_run": dry_run,
+        "origin_count": origin_count,
+        "submitted_count": result.submitted_count,
+        "success_count": result.published_count,
+        "fail_count": result.fail_count,
+        "failed_items": result.failed_items or [],
+    }
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return event_id
 
 
 def format_publish_result(result: PublishResult, shop_name: str = "", origin_count: int = 0) -> str:
@@ -225,6 +261,18 @@ def main():
         submitted_count = min(result["origin_count"], PUBLISH_LIMIT)
         fail_count = result["result"].fail_count
         success_count = result["result"].published_count
+        event_saved = False
+        event_save_error = ""
+        try:
+            save_publish_event(
+                result=result["result"],
+                shop_code=args.shop_code,
+                origin_count=result["origin_count"],
+                dry_run=args.dry_run,
+            )
+            event_saved = True
+        except Exception as persist_error:
+            event_save_error = str(persist_error)
         output = {
             "success": result["success"],
             "markdown": result["markdown"],
@@ -235,8 +283,11 @@ def main():
                 "success_count": success_count,
                 "fail_count": fail_count,
                 "dry_run": args.dry_run,
+                "event_saved": event_saved,
             },
         }
+        if event_save_error:
+            output["data"]["event_save_error"] = event_save_error
     except Exception as e:
         output = {
             "success": False,
