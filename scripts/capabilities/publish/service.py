@@ -23,7 +23,7 @@ class PublishResult:
 
 
 _ERROR_MESSAGES = {
-    "210": "有部分提交失败，请前往【分销管理-铺货失败】查看明细",
+    "210": "有部分提交失败，请前往【1688AI版-分销管理-铺货失败】查看明细",
     "511": "下游店铺授权信息失效，请重新授权",
     "512": "您未完成铺货设置，请先完成铺货设置",
     "500": "三方工具服务请求错误，请稍后重试",
@@ -190,7 +190,6 @@ def format_publish_result(result: PublishResult, shop_name: str = "",
         lines.append("请前往【下游店铺-铺货成功】查看明细。")
     elif result.error_code == "210":
         lines.append(f"⚠️ 共 {n} 个商品，部分提交成功，有部分失败。")
-        lines.append("建议稍后重试失败的商品，或检查商品信息是否完整。")
         lines.append("可前往【分销管理-铺货失败】查看明细。")
     elif result.error_code == "511":
         lines.append(f"❌ **铺货失败**（共 {n} 个商品）")
