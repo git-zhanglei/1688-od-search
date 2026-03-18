@@ -15,7 +15,7 @@
 | 数据类型 | 存储路径 | 格式 |
 |---------|---------|------|
 | 搜索快照 | `{SEARCH_DATA_DIR}/1688_{data_id}.json` | `{"query", "channel", "timestamp", "data_id", "products": {id: {...}}}` |
-| 铺货排查快照 | `{PUBLISH_DATA_DIR}/1688_{time}.json` | time 由 new_publish_snapshot_id() 生成；字段含 time、api_request、api_response、meta、cli_output；CLI 的 data.time 与文件名一致 |
+| 铺货排查快照 | `{PUBLISH_DATA_DIR}/1688_{time}.json` | **仅正式铺货**（未带 `--dry-run`）写入；字段含 time、api_request、api_response、meta、cli_output；CLI 的 data.time 与文件名一致 |
 
 新能力如需持久化数据，必须在此注册路径和格式。
 

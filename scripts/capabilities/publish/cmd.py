@@ -65,25 +65,26 @@ def main():
                 f"确认铺货 {submitted_count} 个商品到目标店铺？"
                 "去掉 --dry-run 执行正式铺货。"
             )
-        try:
-            time = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{datetime.now().microsecond // 1000:03d}"
-            save_publish_snapshot({
-                "time": time,
-                "api_request": result.get("_api_request"),
-                "api_response": result.get("_api_response"),
-                "meta": {
-                    "shop_code": args.shop_code,
-                    "dry_run": args.dry_run,
-                    "search_data_id": args.data_id or "",
-                },
-                "cli_output": {
-                    "success": result["success"],
-                    "markdown": result["markdown"],
-                    "data": data,
-                },
-            })
-        except Exception:
-            data.pop("time", None)
+        if not args.dry_run:
+            try:
+                time = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{datetime.now().microsecond // 1000:03d}"
+                save_publish_snapshot({
+                    "time": time,
+                    "api_request": result.get("_api_request"),
+                    "api_response": result.get("_api_response"),
+                    "meta": {
+                        "shop_code": args.shop_code,
+                        "dry_run": False,
+                        "search_data_id": args.data_id or "",
+                    },
+                    "cli_output": {
+                        "success": result["success"],
+                        "markdown": result["markdown"],
+                        "data": data,
+                    },
+                })
+            except Exception:
+                data.pop("time", None)
         print_output(result["success"], result["markdown"], data)
     except Exception as e:
         print_error(e, {"success": False})
