@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.qoder
 
 # 环境变量配置（可能包含敏感信息）
 .env

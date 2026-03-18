@@ -17,6 +17,7 @@ metadata: {"openclaw": {"emoji": "🛒", "requires": {"bins": ["python3"]}, "pri
 | 命令 | 说明 | 示例 |
 |------|------|------|
 | `search` | 找商品 | `cli.py search --query "帮我找1688上支持一件代发包邮的露营椅，100元以内" --channel douyin` |
+| `prod_detail` | 商品详情 | `cli.py prod_detail --item-ids "991122553819,894138137003"` |
 | `shops` | 查绑定店铺 | `cli.py shops` |
 | `publish` | 铺货 | `cli.py publish --shop-code CODE --data-id ID` |
 | `opportunities` | 商机热榜 | `cli.py opportunities` |
@@ -34,6 +35,10 @@ Agent 根据用户意图**直接执行对应命令**，无需每次先执行 `ch
 各命令在 AK 缺失、店铺异常等情况下会自行返回明确错误，Agent 按下方「异常处理」应对即可。
 
 **选品铺货典型路径**：`search` → 用户筛选 → `shops`（确认目标店铺） → `publish`
+
+**商品详情使用指引**：
+- `prod_detail`：用户想看商品标题、价格、类目、SKU、CPV 属性、商家信息时使用。
+- 优先先抓取并保存；只有在用户明确需要详细内容或分析时，再按 `data_id` 按需读取，避免将大段商详直接带入 prompt。
 
 **商机/趋势使用指引**：
 - `opportunities`：用户想看“此刻/近1小时/热榜/趋势商机”。
@@ -73,6 +78,7 @@ Agent 根据用户意图**直接执行对应命令**，无需每次先执行 `ch
 ## 执行前置（首次命中能力时必须）
 
 - 首次执行 `search` 前：先完整阅读 `references/capabilities/search.md`
+- 首次执行 `prod_detail` 前：先完整阅读 `references/capabilities/prod_detail.md`
 - 首次执行 `shops` 前：先完整阅读 `references/capabilities/shops.md`
 - 首次执行 `publish` 前：先完整阅读 `references/capabilities/publish.md`
 - 首次执行 `configure` 前：先完整阅读 `references/capabilities/configure.md`

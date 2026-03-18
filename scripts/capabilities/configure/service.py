@@ -73,8 +73,12 @@ def configure_via_file(api_key: str) -> bool:
         config["skills"].setdefault("entries", {})
         config["skills"]["entries"].setdefault(SKILL_NAME, {})
         skill_entry = config["skills"]["entries"][SKILL_NAME]
-        # apiKey 作为唯一写入目标
+        # apiKey 作为唯一写入目标，并移除旧格式 env.ALI_1688_AK 避免误导
         skill_entry["apiKey"] = api_key
+        if "env" in skill_entry and isinstance(skill_entry["env"], dict):
+            skill_entry["env"].pop("ALI_1688_AK", None)
+            if not skill_entry["env"]:
+                del skill_entry["env"]
 
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:

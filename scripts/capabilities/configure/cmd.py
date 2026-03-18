@@ -52,7 +52,7 @@ def main():
         md = (
             f"✅ AK 已保存: `{_mask_ak(ak)}`\n\n"
             "后续由 OpenClaw 配置注入生效（以配置为准，不使用本地会话缓存）。\n\n"
-            "若当前会话仍提示 AK 未配置，请新开会话或执行：`openclaw secrets reload`（或 `openclaw gateway restart`）"
+            "若当前会话仍提示 AK未配置或AK无效，请新开会话或执行：`openclaw secrets reload`（或 `openclaw gateway restart`）"
         )
         print_output(True, md, {"configured": True})
     except Exception as e:
