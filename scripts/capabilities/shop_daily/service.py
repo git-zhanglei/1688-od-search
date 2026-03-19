@@ -12,7 +12,9 @@ from _const import SEARCH_DATA_DIR
 from _errors import ServiceError
 from _http import api_post
 from capabilities.opportunities.service import fetch_opportunities
+from capabilities.search.service import search_products
 from capabilities.shops.service import check_shop_status
+from capabilities.trend.service import fetch_trend
 
 CHANNEL_LABELS = {
     "pinduoduo": "拼多多",
@@ -121,6 +123,7 @@ PLATFORM_BONUS = {
 }
 
 USER_HIDDEN_TEXTS = {"", "-", "--", "暂无", "暂无关键词", "暂无趋势数据", "待确认"}
+TREND_FOCUS_LIMIT = 5
 
 
 def _non_empty(value: Any) -> bool:
@@ -547,7 +550,7 @@ def _normalize_product_items(value: Any) -> List[str]:
 
 
 def _extract_product_overview(biz_data: Dict[str, Any]) -> Dict[str, Any]:
-    yesterday_active = _normalize_product_items(
+    active_products = _normalize_product_items(
         biz_data.get("昨日动销商品")
         or biz_data.get("昨日动销")
         or biz_data.get("动销商品")
@@ -559,9 +562,10 @@ def _extract_product_overview(biz_data: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     return {
-        "yesterday_active_products": yesterday_active,
+        "active_products": active_products,
+        "yesterday_active_products": active_products,
         "main_products": main_products,
-        "seed_queries": _dedupe_list(yesterday_active + main_products),
+        "seed_queries": _dedupe_list(active_products + main_products),
     }
 
 
@@ -574,12 +578,12 @@ def _opportunity_from_product_overview(product_overview: Dict[str, Any]) -> Dict
     return {
         "category": lead_product or "主营商品盘",
         "queries": seed_queries[:4],
-        "trend": "基于昨日动销商品与主营商品生成",
+        "trend": "基于动销商品与主营商品生成",
         "competition": "待确认",
         "price_band": "待确认",
         "raw": {
             "source": "shop_daily_product_lists",
-            "yesterday_active_products": product_overview.get("yesterday_active_products", []),
+            "active_products": product_overview.get("active_products", []),
             "main_products": product_overview.get("main_products", []),
         },
     }
@@ -747,7 +751,7 @@ def _build_channel_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 def _build_growth_quality(summary: Dict[str, Any]) -> str:
     rows = summary["rows"]
     if not any(item.get("gmv_dod_pct") is not None or item.get("gmv_wow_pct") is not None for item in rows):
-        return "当前接口未提供环比/同比字段，建议先结合昨日 GMV 与动销商品数判断各渠道承接能力。"
+        return "建议先结合动销商品与主营商品判断选品方向，再用 Query 级点击和转化表现验证承接能力。"
     divergent = [
         item
         for item in rows
@@ -764,30 +768,26 @@ def _build_growth_quality(summary: Dict[str, Any]) -> str:
     if divergent:
         channel_names = "、".join(item["channel_label"] for item in divergent)
         return (
-            f"{channel_names} 出现日环比与周同比背离，说明短期投放或活动对成交有拉动，"
-            "但周维度需求基础仍需验证，建议复盘流量来源与转化链路。"
+            f"{channel_names} 的增长信号出现分化，建议优先复盘流量来源、商品匹配度和转化链路。"
         )
 
     if strong:
         channel_names = "、".join(item["channel_label"] for item in strong[:2])
-        return f"{channel_names} 同时保持日环比和周同比增长，增长质量较好，可优先承接新增选品测试。"
+        return f"{channel_names} 的增长信号更稳定，可优先承接新增选品测试。"
 
-    return "当前增长更多来自结构迁移而非全面走强，建议优先排查流量波动和承接效率。"
+    return "当前增长更像结构迁移而非全面走强，建议优先排查流量波动和承接效率。"
 
 
 def _build_risk_warning(summary: Dict[str, Any]) -> str:
     if not any(item.get("gmv_dod_pct") is not None or item.get("gmv_wow_pct") is not None for item in summary["rows"]):
-        return "当前接口未提供下滑趋势字段，建议优先观察昨日动销商品清单和主力渠道承接表现。"
+        return "建议优先观察动销商品清单与核心 Query 的承接表现，及时替换弱转化商品。"
     risky = summary["risky"]
     if not risky:
         return "主要渠道暂未出现明显下滑风险，可将精力放在优化高潜力类目测试效率。"
 
     top = risky[0]
-    dod = _fmt_percent(top.get("gmv_dod_pct"))
-    wow = _fmt_percent(top.get("gmv_wow_pct"))
     return (
-        f"{top['channel_label']} 需重点警惕，当前日环比 {dod}、周同比 {wow}。"
-        "若连续两周未恢复，建议收缩低转化商品并重新匹配更适合该渠道的切入词。"
+        f"{top['channel_label']} 需重点警惕，建议收缩低转化商品并重新匹配更适合该渠道的切入词。"
     )
 
 
@@ -844,7 +844,7 @@ def _build_query_recommendations(summary: Dict[str, Any], opportunity: Dict[str,
             reason = (
                 f"{best_row['channel_label']} 当前承接能力较强，且“{query}”与该渠道的"
                 f"{CHANNEL_PROFILES.get(best_row['channel'], '用户需求')}更匹配；"
-                "结合昨日动销商品与主营商品信号，适合优先测试。"
+                "结合动销商品与主营商品信号，适合优先测试。"
             )
         elif live_market_mode:
             topic_text = opportunity.get("matched_topic") or query
@@ -894,10 +894,10 @@ def _build_channel_match(summary: Dict[str, Any], recommendations: List[Dict[str
                 key=lambda item: _query_score_for_channel(item, row["channel"], row),
             )
         lines.append(
-            f"- {row['channel_label']}：GMV 占比 {_fmt_ratio_percent(row['share'] * 100)}，"
+            f"- {row['channel_label']}：渠道匹配度较高，"
             f"优先测试“{query}”，原因是该渠道{CHANNEL_PROFILES.get(row['channel'], '需求相对明确')}。"
         )
-    return lines or ["- 暂无渠道数据，建议先确认店铺已返回 GMV 明细。"]
+    return lines or ["- 暂无渠道数据，建议先围绕动销商品与主营商品整理首批测试 Query。"]
 
 
 def _build_short_actions(summary: Dict[str, Any], recommendations: List[Dict[str, Any]]) -> List[str]:
@@ -910,11 +910,11 @@ def _build_short_actions(summary: Dict[str, Any], recommendations: List[Dict[str
     ]
     if dominant:
         actions.append(
-            f"- 先在 {dominant['channel_label']} 放量验证，复用高 GMV 渠道的人群与内容素材，缩短试错周期。"
+            f"- 先在 {dominant['channel_label']} 放量验证，复用该渠道已有的人群与内容素材，缩短试错周期。"
         )
     if risky:
         actions.append(
-            f"- 对 {risky['channel_label']} 下滑商品做清单复盘，优先替换近 7 天低转化 SKU 与弱曝光词。"
+            f"- 对 {risky['channel_label']} 下滑商品做清单复盘，优先替换低转化 SKU 与弱曝光词。"
         )
     return actions
 
@@ -935,19 +935,457 @@ def _build_mid_actions(summary: Dict[str, Any], opportunity: Dict[str, Any]) -> 
 
 
 def _build_exec_summary(summary: Dict[str, Any], opportunity: Dict[str, Any], recommendations: List[Dict[str, Any]]) -> str:
-    dominant = summary["dominant"]
-    fastest = summary["fastest"]
     first_query = recommendations[0]["query"] if recommendations else "核心长尾词"
-    focus_topic = _visible_string(opportunity.get("matched_topic")) or _visible_string(opportunity.get("category")) or "主营类目"
-    parts = []
-    if dominant:
-        parts.append(f"{dominant['channel_label']} 是当前主力渠道")
-    if fastest:
-        parts.append(f"{fastest['channel_label']} 增长最快")
-    parts.append(f"主营方向“{focus_topic}”值得优先测试")
-    parts.append(f"建议优先测试“{first_query}”等 Query")
-    summary_text = "，".join(parts) + "，先做 1-2 周小步快跑验证，再按结果放大高转化渠道。"
+    focus_topic = _visible_string(opportunity.get("matched_topic")) or _visible_string(opportunity.get("category")) or "主营商品"
+    summary_text = (
+        f"建议围绕“{focus_topic}”相关商品做小步快跑验证，优先测试“{first_query}”等 Query，"
+        "再按点击、转化和加购表现放大高匹配渠道。"
+    )
     return summary_text[:200]
+
+
+def _escape_md_cell(value: Any) -> str:
+    return str(value or "").replace("|", "\\|")
+
+
+def _extract_candidate_growth_rows(candidate: Dict[str, Any]) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    raw = candidate.get("raw", {})
+    content_list = raw.get("content", []) if isinstance(raw, dict) else []
+    for item in content_list:
+        if not isinstance(item, dict):
+            continue
+        query = _stringify(item.get("searchWord") or item.get("title"), "")
+        detail = _clean_markdown_text(_stringify(item.get("text"), ""))
+        if not query and not detail:
+            continue
+        growth_match = re.findall(r"(\d+(?:\.\d+)?)\s*%", detail)
+        growth_pct = f"{growth_match[0]}%" if growth_match else "-"
+        rows.append(
+            {
+                "query": query or "待确认词",
+                "growth_pct": growth_pct,
+                "detail": detail,
+            }
+        )
+    return rows
+
+
+def _ranked_market_candidates(opportunity: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = opportunity.get("raw", {}) if isinstance(opportunity.get("raw"), dict) else {}
+    ranked = raw.get("ranked_candidates", []) if isinstance(raw, dict) else []
+    candidates: List[Dict[str, Any]] = []
+    seen = set()
+
+    def _append_candidate(candidate: Dict[str, Any]):
+        topic = _stringify(candidate.get("topic"), "")
+        query_key = tuple(_dedupe_list(candidate.get("search_words", []) or []))
+        key = (topic, candidate.get("platform", ""), query_key)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(candidate)
+
+    if isinstance(ranked, list):
+        for item in ranked:
+            if isinstance(item, dict):
+                _append_candidate(item)
+
+    matched = raw.get("matched_opportunity") if isinstance(raw, dict) else None
+    if isinstance(matched, dict):
+        _append_candidate(matched)
+
+    if not candidates:
+        fallback_candidate = {
+            "platform": opportunity.get("matched_platform", ""),
+            "platform_label": opportunity.get("matched_platform_label", ""),
+            "rank": "",
+            "topic": opportunity.get("matched_topic") or opportunity.get("category") or "核心商机",
+            "search_words": _dedupe_list(opportunity.get("queries", []) or []),
+            "signal": opportunity.get("trend", ""),
+            "text": "",
+            "raw": {},
+        }
+        _append_candidate(fallback_candidate)
+
+    return candidates[:2]
+
+
+def _preferred_channels_from_summary(summary: Dict[str, Any]) -> List[str]:
+    channels = [item.get("channel", "") for item in summary.get("rows", []) if item.get("channel")]
+    return _dedupe_list(channels)
+
+
+def _choose_search_channel(
+    candidate: Dict[str, Any],
+    recommendations: List[Dict[str, Any]],
+    preferred_channels: List[str],
+) -> str:
+    candidate_queries = _dedupe_list(candidate.get("search_words", []) or [])
+    for query in candidate_queries:
+        for recommendation in recommendations:
+            if recommendation.get("query") == query and recommendation.get("channel"):
+                return recommendation["channel"]
+    if preferred_channels:
+        return preferred_channels[0]
+    platform = _normalize_channel(candidate.get("platform"))
+    if platform in {"pinduoduo", "douyin", "taobao", "xiaohongshu"}:
+        return platform
+    return ""
+
+
+def _search_recommended_products(query: str, channel: str, max_items: int = 4) -> List[Dict[str, Any]]:
+    if not query:
+        return []
+
+    products = []
+    tried_channels = _dedupe_list([channel, ""])
+    for current_channel in tried_channels:
+        try:
+            products = search_products(query, current_channel)
+        except Exception:
+            products = []
+        if products:
+            break
+
+    rows: List[Dict[str, Any]] = []
+    for product in products[:max_items]:
+        stats = product.stats if isinstance(product.stats, dict) else {}
+        rows.append(
+            {
+                "title": product.title,
+                "price": product.price,
+                "url": product.url,
+                "sales": stats.get("last30DaysSales") if stats.get("last30DaysSales") is not None else "-",
+                "category": stats.get("categoryName") or "-",
+            }
+        )
+    return rows
+
+
+def _build_deep_opportunities(
+    opportunity: Dict[str, Any],
+    recommendations: List[Dict[str, Any]],
+    preferred_channels: List[str],
+) -> List[Dict[str, Any]]:
+    deep_items: List[Dict[str, Any]] = []
+    for candidate in _ranked_market_candidates(opportunity):
+        query_list = _dedupe_list(candidate.get("search_words", []) or opportunity.get("queries", []) or [])
+        primary_query = query_list[0] if query_list else ""
+        search_channel = _choose_search_channel(candidate, recommendations, preferred_channels)
+        products = _search_recommended_products(primary_query, search_channel)
+        deep_items.append(
+            {
+                "topic": _stringify(candidate.get("topic"), _stringify(opportunity.get("matched_topic"), "核心商机")),
+                "platform": candidate.get("platform", "") or opportunity.get("matched_platform", ""),
+                "platform_label": candidate.get("platform_label", "") or opportunity.get("matched_platform_label", ""),
+                "rank": candidate.get("rank", ""),
+                "signal": _stringify(candidate.get("signal"), _stringify(opportunity.get("trend"), "")),
+                "primary_query": primary_query,
+                "queries": query_list,
+                "growth_rows": _extract_candidate_growth_rows(candidate),
+                "products": products,
+                "search_channel": search_channel,
+                "search_channel_label": _channel_label(search_channel) if search_channel else "全渠道",
+            }
+        )
+    return deep_items[:2]
+
+
+def _extract_trend_section_terms(text: str, section_title: str, limit: int = 2) -> List[str]:
+    pattern = rf"####\s*{re.escape(section_title)}（\d+\s*条）\n((?:(?!\n#### |\n### |\Z).|\n)*)"
+    match = re.search(pattern, text)
+    if not match:
+        return []
+    body = match.group(1)
+    terms = re.findall(r"\d+\.\s+\*\*([^*]+)\*\*", body)
+    return _dedupe_list([_clean_markdown_text(term) for term in terms])[:limit]
+
+
+def _extract_trend_recent_motion(text: str) -> str:
+    pattern = r"####\s*\d+\.\s*近期动向（最近3个月）\s*\n\n(?:-[^\n]*\n)?-\s*([^\n]+)"
+    match = re.search(pattern, text)
+    if not match:
+        return ""
+    return _clean_markdown_text(match.group(1))
+
+
+def _extract_trend_number(text: str, pattern: str) -> Optional[float]:
+    match = re.search(pattern, text)
+    if not match:
+        return None
+    return _safe_float(match.group(1))
+
+
+def _extract_trend_text(text: str, pattern: str) -> str:
+    match = re.search(pattern, text)
+    if not match:
+        return ""
+    return _clean_markdown_text(match.group(1))
+
+
+def _normalize_trend_query(product: str) -> str:
+    cleaned = _stringify(product, "").replace("其他", "").strip()
+    if not cleaned:
+        return ""
+
+    candidates: List[str] = []
+    for part in re.split(r"[、,，;；/]+", cleaned):
+        value = part.strip()
+        value = re.sub(r"(用品|用具|产品|商品)$", "", value)
+        if len(value) >= 2:
+            candidates.append(value)
+
+    candidates = _dedupe_list(candidates)
+    for candidate in candidates:
+        if 2 <= len(candidate) <= 5:
+            return candidate
+    return candidates[0] if candidates else ""
+
+
+def _pick_trend_focus_products(main_products: List[str], deep_opportunities: List[Dict[str, Any]], limit: int = TREND_FOCUS_LIMIT) -> List[str]:
+    ranked: List[Dict[str, Any]] = []
+    for index, product in enumerate(main_products):
+        seeds: List[str] = []
+        for item in deep_opportunities:
+            seeds.extend([item.get("topic", ""), item.get("primary_query", "")])
+            seeds.extend(item.get("queries", []) or [])
+        score = _seed_match_score(product, _dedupe_list(seeds))
+        ranked.append({"product": product, "score": score, "index": index})
+
+    ranked.sort(key=lambda item: (-item["score"], item["index"]))
+    selected = [item["product"] for item in ranked[:limit]]
+    selected_set = set(selected)
+
+    if len(selected) < limit:
+        for product in main_products:
+            if product not in selected_set:
+                selected.append(product)
+                selected_set.add(product)
+            if len(selected) >= limit:
+                break
+    return selected[:limit]
+
+
+def _build_trend_market_assessment(trend_info: Dict[str, Any]) -> str:
+    scale_label = trend_info.get("scale_label") or "类目"
+    supply_ratio = trend_info.get("supply_ratio")
+    yoy = trend_info.get("yoy")
+    recent_motion = trend_info.get("recent_motion") or ""
+
+    parts = [scale_label]
+    if supply_ratio is not None:
+        if supply_ratio >= 1:
+            parts.append(f"供需比{supply_ratio:.2f}，承接还可以")
+        else:
+            parts.append(f"供需比{supply_ratio:.2f}，供给偏多")
+    if yoy is not None:
+        parts.append(f"年同比{yoy:+.1f}%")
+    if recent_motion:
+        parts.append(recent_motion)
+    return "；".join(parts[:3])
+
+
+def _build_trend_user_suggestion(trend_info: Dict[str, Any], deep_opportunities: List[Dict[str, Any]]) -> str:
+    supply_ratio = trend_info.get("supply_ratio")
+    yoy = trend_info.get("yoy")
+    median_price = trend_info.get("median_price")
+    blue_ocean_terms = trend_info.get("blue_ocean_terms", [])
+    growth_terms = trend_info.get("growth_terms", [])
+    pick_terms = blue_ocean_terms or growth_terms
+
+    if pick_terms:
+        query_text = " / ".join(pick_terms[:2])
+        if median_price is not None:
+            return f"优先试“{query_text}”，定价先贴近¥{int(round(median_price))}中位带，更容易测出承接。"
+        return f"优先试“{query_text}”，先做细分词小批量测试，不要一上来铺大路货。"
+
+    if supply_ratio is not None and supply_ratio < 0.8 and yoy is not None and yoy <= -15:
+        return "先保留基础款，不建议重投；除非有明显差异化场景或更强的价格优势。"
+
+    if supply_ratio is not None and supply_ratio >= 1:
+        query_hint = ""
+        if deep_opportunities:
+            query_hint = deep_opportunities[0].get("primary_query", "")
+        if query_hint:
+            return f"可以围绕“{query_hint}”延展近似款，优先做同人群、同场景的小范围测试。"
+        return "可以继续保留并做细分词测试，先验证点击和转化后再扩大。"
+
+    return "先小批量试词试图，跑出正反馈后再追加预算，不要平均分配资源。"
+
+
+def _fetch_trend_matrix_row(product: str, query: str, deep_opportunities: List[Dict[str, Any]]) -> Dict[str, str]:
+    if not query:
+        return {
+            "product": product,
+            "assessment": "未拿到趋势数据",
+            "suggestion": "当前主营商品没有匹配到可用趋势词，先保留基础供给，后续再补趋势验证。",
+        }
+
+    try:
+        result = fetch_trend(query=query, timeout=10)
+    except Exception:
+        return {
+            "product": product,
+            "assessment": "未拿到趋势数据",
+            "suggestion": "先保留基础供给，后续再补趋势验证，不建议当前重投。",
+        }
+
+    raw_text = result.get("data")
+    text = raw_text if isinstance(raw_text, str) else _stringify(raw_text, "")
+    scale_line = _extract_trend_text(text, r"\*\*市场规模\*\*：([^\n]+)")
+    scale_label = ""
+    if "→" in scale_line:
+        scale_label = scale_line.split("→", 1)[1].strip()
+    supply_ratio = _extract_trend_number(text, r"\*\*供需关系\*\*：供需比\s*([-\d.]+)")
+    yoy = _extract_trend_number(text, r"\*\*年同比增长\*\*：([-\d.]+)")
+    avg_price = _extract_trend_number(text, r"\*\*均价\*\*：¥?([-\d.]+)")
+    median_price = _extract_trend_number(text, r"\*\*中位数价格\*\*：¥?([-\d.]+)")
+    trend_info = {
+        "scale_label": scale_label or scale_line,
+        "supply_ratio": supply_ratio,
+        "yoy": yoy,
+        "avg_price": avg_price,
+        "median_price": median_price,
+        "recent_motion": _extract_trend_recent_motion(text),
+        "blue_ocean_terms": _extract_trend_section_terms(text, "蓝海商机"),
+        "growth_terms": _extract_trend_section_terms(text, "增长迅速"),
+    }
+    return {
+        "product": product,
+        "assessment": _build_trend_market_assessment(trend_info),
+        "suggestion": _build_trend_user_suggestion(trend_info, deep_opportunities),
+    }
+
+
+def _build_main_product_matrix(main_products: List[str], deep_opportunities: List[Dict[str, Any]]) -> List[str]:
+    focus_products = _pick_trend_focus_products(main_products, deep_opportunities, TREND_FOCUS_LIMIT)
+    lines = ["", "### 主营商品矩阵", "| 品类 | 市场评估 | 用户建议 |", "| --- | --- | --- |"]
+    for product in focus_products:
+        trend_query = _normalize_trend_query(product)
+        insight = _fetch_trend_matrix_row(product, trend_query, deep_opportunities)
+        lines.append(
+            f"| {_escape_md_cell(product)} | {_escape_md_cell(insight['assessment'])} | {_escape_md_cell(insight['suggestion'])} |"
+        )
+    return lines
+
+
+def _seeded_variant(options: List[str], seed_text: str, salt: int = 0) -> str:
+    if not options:
+        return ""
+    total = sum((index + 1 + salt) * ord(char) for index, char in enumerate(seed_text))
+    return options[total % len(options)]
+
+
+def _build_no_active_products_message(main_products: List[str], deep_opportunities: List[Dict[str, Any]]) -> str:
+    focus_topic = ""
+    focus_query = ""
+    if deep_opportunities:
+        focus_topic = _visible_string(deep_opportunities[0].get("topic"))
+        focus_query = _visible_string(deep_opportunities[0].get("primary_query"))
+
+    focus_product = _visible_string(main_products[0]) if main_products else ""
+    seed_parts = _dedupe_list([focus_product, focus_topic, focus_query] + main_products[:3])
+    seed_text = "|".join(seed_parts) or "shop_daily_no_active_products"
+
+    openings = [
+        "最近店里的商品还没有跑出动销",
+        "这段时间你的商品暂时还没迎来动销",
+        "近期商品这边还没有看到动销起色",
+        "最近这批商品暂时还没跑出成交节奏",
+        "这一阵店铺商品还没有开始动销",
+    ]
+    reassurances = [
+        "先别急",
+        "先不用焦虑",
+        "也别灰心",
+        "别先急着下判断",
+        "这个阶段先稳住节奏就好",
+    ]
+    bridges = [
+        "我已经顺着你现在的商品盘筛了几条更容易先出单的商机",
+        "已经结合你当前主营方向挑了几条更值得先测的商机",
+        "先帮你把更有机会起量的商机方向拎出来了",
+        "下面给你留的是更容易承接流量的商机方向",
+        "我先替你筛了一轮更有机会跑出首单的商机",
+    ]
+    focus_clauses = [
+        f"，可以优先围绕“{focus_topic}”去试" if focus_topic else "",
+        f"，先从“{focus_query}”这类词切进去更顺手" if focus_query else "",
+        f"，先把“{focus_product}”相关款打磨扎实会更容易接住流量" if focus_product else "",
+        "",
+    ]
+
+    opening = _seeded_variant(openings, seed_text, salt=3)
+    reassurance = _seeded_variant(reassurances, seed_text, salt=11)
+    bridge = _seeded_variant(bridges, seed_text, salt=19)
+    focus_clause = _seeded_variant(focus_clauses, seed_text, salt=29)
+    return f"{opening}，{reassurance}，{bridge}{focus_clause}。"
+
+
+def _build_active_products_section(active_products: List[str], main_products: List[str], deep_opportunities: List[Dict[str, Any]]) -> List[str]:
+    if not active_products:
+        return [
+            "## 第一部分：店铺经营状态",
+            "",
+            "### 动销情况",
+            _build_no_active_products_message(main_products, deep_opportunities),
+        ]
+
+    lines = ["## 第一部分：店铺经营状态", "", "### 动销情况", "| 序号 | 动销商品 |", "| --- | --- |"]
+    for index, product in enumerate(active_products, 1):
+        lines.append(f"| {index} | {_escape_md_cell(product)} |")
+    return lines
+
+
+def _build_opportunity_detail_section(item: Dict[str, Any], index: int) -> List[str]:
+    lines = [f"### 商机 {index}：{item['topic']}", "| 指标 | 数值 |", "| --- | --- |"]
+    lines.append(f"| 来源平台 | {item['platform_label'] or '-'} |")
+    lines.append(f"| 市场热度 | {item['signal'] or '-'} |")
+    lines.append(f"| 排名 | {item['rank'] or '-'} |")
+    lines.append(f"| 推荐切入词 | {item['primary_query'] or '-'} |")
+    lines.append(f"| 推荐搜品渠道 | {item['search_channel_label']} |")
+
+    growth_rows = item.get("growth_rows", [])
+    if growth_rows:
+        lines.extend(["", "| 搜索词 | 搜索增速 | 机会说明 |", "| --- | --- | --- |"])
+        for row in growth_rows[:3]:
+            detail = _escape_md_cell(row["detail"])
+            lines.append(f"| {_escape_md_cell(row['query'])} | {row['growth_pct']} | {detail} |")
+
+    products = item.get("products", [])
+    if products:
+        lines.extend(["", "| 推荐商品 | 价格 | 30天销量 | 类目 |", "| --- | --- | --- | --- |"])
+        for product in products:
+            title = _escape_md_cell(product["title"])
+            lines.append(
+                f"| [{title}]({product['url']}) | ¥{product['price']} | {product['sales']} | {_escape_md_cell(product['category'])} |"
+            )
+
+    return lines
+
+
+def _build_shop_daily_report_markdown(
+    summary: Dict[str, Any],
+    opportunity: Dict[str, Any],
+    product_overview: Optional[Dict[str, Any]] = None,
+    recommendations: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    product_overview = product_overview or {}
+    recommendations = recommendations or []
+    active_products = product_overview.get("active_products", []) or product_overview.get("yesterday_active_products", [])
+    main_products = product_overview.get("main_products", [])
+    preferred_channels = _preferred_channels_from_summary(summary)
+    deep_opportunities = _build_deep_opportunities(opportunity, recommendations, preferred_channels)
+
+    lines = _build_active_products_section(active_products, main_products, deep_opportunities)
+    lines.extend(_build_main_product_matrix(main_products, deep_opportunities))
+    lines.extend(["", "## 第二部分：精选商机深度洞察"])
+    for index, item in enumerate(deep_opportunities, 1):
+        lines.append("")
+        lines.extend(_build_opportunity_detail_section(item, index))
+
+    return "\n".join(lines)
 
 
 def _analysis_channel_code(channel: str) -> str:
@@ -959,48 +1397,13 @@ def _build_snapshot_markdown(
     opportunity: Dict[str, Any],
     product_overview: Optional[Dict[str, Any]] = None,
 ) -> str:
-    rows = summary["rows"]
     product_overview = product_overview or {}
     lines: List[str] = ["## 店铺经营日报数据快照"]
-
-    has_extended_metrics = any(
-        row.get("gmv_1") is not None or row.get("gmv_7") is not None or row.get("qty_1") is not None or row.get("qty_7") is not None
-        for row in rows
-    )
-    has_growth_metrics = any(
-        row.get("gmv_dod_pct") is not None or row.get("gmv_wow_pct") is not None for row in rows
-    )
-
-    if has_extended_metrics:
-        lines.append("\n### 渠道经营概览")
-        lines.append("| 渠道 | 昨日GMV | 近7日GMV | 昨日动销商品数 | 近7日动销商品数 | 渠道占比 |")
-        lines.append("|------|---------|----------|----------------|-----------------|----------|")
-        if rows:
-            for row in rows:
-                lines.append(
-                    f"| {row['channel_label']} | {_fmt_currency(row.get('gmv_1') if row.get('gmv_1') is not None else row['gmv'])} | "
-                    f"{_fmt_currency(row.get('gmv_7'))} | {_fmt_count(row.get('qty_1'))} | {_fmt_count(row.get('qty_7'))} | "
-                    f"{_fmt_ratio_percent(row['share'] * 100)} |"
-                )
-        else:
-            lines.append("| - | - | - | - | - | - |")
-    else:
-        lines.append("\n### 渠道GMV明细表")
-        lines.append("| 渠道 | GMV | 日环比 | 周同比 | 渠道占比 |")
-        lines.append("|------|-----|--------|--------|----------|")
-        if rows:
-            for row in rows:
-                lines.append(
-                    f"| {row['channel_label']} | {_fmt_currency(row['gmv'])} | {_fmt_percent(row['gmv_dod_pct'])} | "
-                    f"{_fmt_percent(row['gmv_wow_pct'])} | {_fmt_ratio_percent(row['share'] * 100)} |"
-                )
-        else:
-            lines.append("| - | - | - | - | - |")
-
-    yesterday_active = product_overview.get("yesterday_active_products", [])
+    active_products = product_overview.get("active_products", []) or product_overview.get("yesterday_active_products", [])
     main_products = product_overview.get("main_products", [])
 
-    lines.append("\n### 主营商品")
+    lines.append("\n### 店铺分析")
+    _append_visible_line(lines, "动销商品", active_products[:8])
     _append_visible_line(lines, "重点主营商品", opportunity.get("category"))
     _append_visible_line(lines, "主营商品", main_products[:6])
 
@@ -1018,32 +1421,14 @@ def _build_snapshot_markdown(
         _append_visible_line(lines, "热度信号", trend_signal)
         _append_visible_line(lines, "参考价格带", price_band)
 
-    overview_lines: List[str] = []
-    _append_visible_line(overview_lines, "昨日动销商品", yesterday_active[:8])
-    if not matched_topic:
-        _append_visible_line(overview_lines, "优先关注商品", main_products[:8])
-    if overview_lines:
-        lines.append("\n### 商品概览")
-        lines.extend(overview_lines)
-
     lines.append("\n### 结构化摘要")
-    dominant = summary["dominant"]
-    fastest = summary["fastest"]
-    risky_names = "、".join(item["channel_label"] for item in summary["risky"]) if summary["risky"] else "无明显下滑渠道"
-    lines.append(f"- {'总昨日GMV' if has_extended_metrics else '总GMV'}：{_fmt_currency(summary['total_gmv'])}")
-    if dominant:
-        lines.append(f"- 主力渠道：{dominant['channel_label']}")
-    if has_growth_metrics:
-        if fastest:
-            lines.append(f"- 增长最快渠道：{fastest['channel_label']}")
-        lines.append(f"- 风险渠道：{risky_names}")
-    else:
-        top_active = summary.get("top_active")
-        if top_active:
-            lines.append(f"- 昨日动销最强渠道：{top_active['channel_label']}")
-        lines.append(f"- 昨日动销商品总数：{_fmt_count(summary.get('total_qty_1'))}")
-        lines.append(f"- 主营商品数：{len(main_products)}")
-    lines.append(f"- 结构健康度：{summary['structure']}（头部集中度 {_fmt_ratio_percent(summary['concentration_pct'])}）")
+    lines.append(f"- 动销商品数：{len(active_products)}")
+    lines.append(f"- 主营商品数：{len(main_products)}")
+    if matched_topic:
+        lines.append(f"- 核心方向：{matched_topic}")
+    elif _is_user_visible(opportunity.get("category")):
+        lines.append(f"- 核心方向：{_visible_string(opportunity.get('category'))}")
+    lines.append(f"- 渠道结构判断：{summary['structure']}")
     lines.append("\n说明：以上内容是接口数据整理快照。最终面向用户的经营日报，需要基于 `data.analysis_payload` 按 shop_daily 分析提示词生成。")
 
     return "\n".join(lines)
@@ -1055,23 +1440,15 @@ def _build_analysis_payload(
     product_overview: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     product_overview = product_overview or {}
-    channel_input = [
-        {
-            "channel": _analysis_channel_code(row["channel"]),
-            "channel_label": row["channel_label"],
-            "gmv": row["gmv"],
-            "gmv_1": row.get("gmv_1"),
-            "gmv_7": row.get("gmv_7"),
-            "qty_1": row.get("qty_1"),
-            "qty_7": row.get("qty_7"),
-            "gmv_dod_pct": row["gmv_dod_pct"],
-            "gmv_wow_pct": row["gmv_wow_pct"],
-        }
-        for row in summary["rows"]
-    ]
+    active_products = product_overview.get("active_products", []) or product_overview.get("yesterday_active_products", [])
+    main_products = product_overview.get("main_products", [])
+    store_input = {
+        "active_products": active_products,
+        "main_products": main_products,
+    }
     opportunity_input = {
         "main_product": opportunity.get("category", ""),
-        "main_products": opportunity.get("queries", []),
+        "main_products": main_products or opportunity.get("queries", []),
         "market_topic": opportunity.get("matched_topic", ""),
         "market_query": (opportunity.get("queries") or [""])[0],
         "market_platform": opportunity.get("matched_platform_label", ""),
@@ -1080,59 +1457,21 @@ def _build_analysis_payload(
         "price_band": opportunity.get("price_band", ""),
     }
     derived_metrics = {
-        "total_gmv": summary["total_gmv"],
-        "total_qty_1": summary.get("total_qty_1"),
-        "total_qty_7": summary.get("total_qty_7"),
-        "dominant_channel": (
-            {
-                "channel": _analysis_channel_code(summary["dominant"]["channel"]),
-                "channel_label": summary["dominant"]["channel_label"],
-                "gmv": summary["dominant"]["gmv"],
-                "share_pct": round(summary["dominant"]["share"] * 100, 1),
-            }
-            if summary["dominant"]
-            else {}
-        ),
-        "fastest_channel": (
-            {
-                "channel": _analysis_channel_code(summary["fastest"]["channel"]),
-                "channel_label": summary["fastest"]["channel_label"],
-                "gmv_dod_pct": summary["fastest"]["gmv_dod_pct"],
-            }
-            if summary["fastest"]
-            else {}
-        ),
-        "risky_channels": [
-            {
-                "channel": _analysis_channel_code(item["channel"]),
-                "channel_label": item["channel_label"],
-                "gmv_dod_pct": item["gmv_dod_pct"],
-                "gmv_wow_pct": item["gmv_wow_pct"],
-            }
-            for item in summary["risky"]
-        ],
+        "analysis_mode": "product_snapshot",
+        "active_product_count": len(active_products),
+        "main_product_count": len(main_products),
         "structure": summary["structure"],
-        "concentration_pct": round(summary["concentration_pct"], 1),
-        "top_active_channel": (
-            {
-                "channel": _analysis_channel_code(summary["top_active"]["channel"]),
-                "channel_label": summary["top_active"]["channel_label"],
-                "qty_1": summary["top_active"].get("qty_1"),
-            }
-            if summary.get("top_active")
-            else {}
-        ),
-        "yesterday_active_products": product_overview.get("yesterday_active_products", []),
-        "main_products": product_overview.get("main_products", []),
+        "active_products": active_products,
+        "main_products": main_products,
         "market_topic": opportunity.get("matched_topic", ""),
         "market_platform": opportunity.get("matched_platform_label", ""),
     }
 
     return {
-        "input": channel_input,
+        "input": store_input,
         "oppo": opportunity_input,
         "derived_metrics": derived_metrics,
-        "input_text": json.dumps(channel_input, ensure_ascii=False, indent=2),
+        "input_text": json.dumps(store_input, ensure_ascii=False, indent=2),
         "oppo_text": json.dumps(opportunity_input, ensure_ascii=False, indent=2),
     }
 
@@ -1336,7 +1675,7 @@ def _build_shop_daily_seed_context(
         [opportunity.get("category", "")]
         + list(opportunity.get("queries", []) or [])
         + list(product_overview.get("main_products", []) or [])
-        + list(product_overview.get("yesterday_active_products", []) or [])
+        + list(product_overview.get("active_products", []) or product_overview.get("yesterday_active_products", []) or [])
     )
     return {"preferred_channels": preferred_channels, "seeds": seeds[:16]}
 
@@ -1391,10 +1730,12 @@ def _enrich_opportunity_with_live_market(
     if not candidates:
         return opportunity
 
-    scored = [
-        (candidate, _shop_daily_opportunity_score(candidate, seed_context))
-        for candidate in candidates
-    ]
+    scored = [(candidate, _shop_daily_opportunity_score(candidate, seed_context)) for candidate in candidates]
+    ranked_candidates = [
+        dict(candidate, score=round(score, 2))
+        for candidate, score in sorted(scored, key=lambda item: item[1], reverse=True)
+        if score > 0
+    ][:2]
     best_candidate, best_score = max(scored, key=lambda item: item[1])
     if best_score < 42:
         return opportunity
@@ -1419,6 +1760,7 @@ def _enrich_opportunity_with_live_market(
                 "source": "opportunities_live_match",
                 "seed_context": seed_context,
                 "matched_opportunity": best_candidate,
+                "ranked_candidates": ranked_candidates,
             },
         }
     )
@@ -1480,7 +1822,7 @@ def _fallback_opportunity_from_context(user_context: Dict[str, Any], opportuniti
     fallback = {
         "category": category,
         "queries": _default_queries(category),
-        "trend": "基于最近用户搜索偏好回退生成",
+        "trend": "基于用户搜索偏好回退生成",
         "competition": "待验证",
         "price_band": _stringify(latest_search.get("price_band"), "待确认"),
         "matched_platform": "",
@@ -1494,7 +1836,13 @@ def _fallback_opportunity_from_context(user_context: Dict[str, Any], opportuniti
     if not candidates:
         return fallback
 
-    best = max(candidates, key=lambda item: _opportunity_match_score(item, user_context))
+    scored = [(candidate, _opportunity_match_score(candidate, user_context)) for candidate in candidates]
+    ranked_candidates = [
+        dict(candidate, score=round(score, 2))
+        for candidate, score in sorted(scored, key=lambda item: item[1], reverse=True)
+        if score > 0
+    ][:2]
+    best = max(scored, key=lambda item: item[1])[0]
     queries = _dedupe_list(best.get("search_words", []) + _default_queries(category))[:4]
     fallback.update(
         {
@@ -1505,7 +1853,10 @@ def _fallback_opportunity_from_context(user_context: Dict[str, Any], opportuniti
             "matched_platform_label": best.get("platform_label", ""),
             "matched_topic": best.get("topic", ""),
             "source": "opportunities_fallback",
-            "raw": best,
+            "raw": {
+                "matched_opportunity": best,
+                "ranked_candidates": ranked_candidates,
+            },
         }
     )
     return fallback
@@ -1540,7 +1891,7 @@ def _build_fallback_recommendations(user_context: Dict[str, Any], opportunity: D
                 "channel": channel,
                 "channel_label": _channel_label(channel),
                 "reason": (
-                    f"结合用户最近搜索“{_stringify(latest_search.get('query'), opportunity.get('category', '该类目'))}”"
+                    f"结合搜索记录“{_stringify(latest_search.get('query'), opportunity.get('category', '该类目'))}”"
                     f"与商机话题“{source_hint}”，该词更适合在{_channel_label(channel)}先做测款。"
                 ),
                 "price": opportunity.get("price_band", "待确认"),
@@ -1603,18 +1954,18 @@ def _build_fallback_snapshot_markdown(
     category = _stringify(opportunity.get("category"), _stringify(latest_search.get("category"), "核心类目"))
     topic = _stringify(opportunity.get("matched_topic"), category)
     price_band = _visible_string(opportunity.get("price_band")) or _visible_string(latest_search.get("price_band"))
-    trend = _visible_string(opportunity.get("trend")) or "近1小时热度走强"
+    trend = _visible_string(opportunity.get("trend")) or "热度走强"
     top_recommendation = recommendations[0] if recommendations else {}
     p0_query = _visible_string(top_recommendation.get("query"))
 
-    lines: List[str] = ["## 今日选品策略日报"]
+    lines: List[str] = ["## 选品策略日报"]
     lines.append("")
-    intro = f"今天建议围绕 **{topic}** 做集中测款，优先在 **{primary_channel_label}** 承接。"
+    intro = f"建议围绕 **{topic}** 做集中测款，优先在 **{primary_channel_label}** 承接。"
     if price_band:
         intro = f"{intro[:-1]}，主打价格带 **{price_band}**。"
     lines.append(intro)
 
-    lines.append("\n### 今日策略摘要")
+    lines.append("\n### 策略摘要")
     lines.append(f"- 主推方向：{category}")
     lines.append(f"- 核心商机：{topic}")
     lines.append(f"- 建议优先渠道：{primary_channel_label}")
@@ -1633,7 +1984,7 @@ def _build_fallback_snapshot_markdown(
     )
     if latest_search.get("channel_label") and latest_search.get("channel_label") != primary_channel_label:
         lines.append(
-            f"- 你最近在 **{latest_search.get('channel_label')}** 搜过“{_stringify(latest_search.get('query'), category)}”，"
+            f"- 你的搜索记录里包含 **{latest_search.get('channel_label')}** 渠道的“{_stringify(latest_search.get('query'), category)}”，"
             "可以同步做内容测款，验证点击率和收藏率。"
         )
     lines.append(
@@ -1657,7 +2008,7 @@ def _build_fallback_snapshot_markdown(
         "同步补评价素材和场景图。"
     )
     lines.append(
-        f"\n执行摘要：今天先围绕“{topic}”做选品测试，优先跑 {primary_channel_label} 渠道，"
+        f"\n执行摘要：先围绕“{topic}”做选品测试，优先跑 {primary_channel_label} 渠道，"
         "用 P0 Query 快速筛出高点击、高转化款，再决定是否扩大铺货。"
     )
     return "\n".join(lines)
@@ -1674,7 +2025,26 @@ def _build_fallback_result(opportunities_timeout: int = 20, fallback_reason: str
     opportunity = _fallback_opportunity_from_context(user_context, opportunities_data)
     recommendations = _build_fallback_recommendations(user_context, opportunity)
     analysis_payload = _build_fallback_analysis_payload(user_context, opportunity, recommendations, fallback_reason)
-    markdown = _build_fallback_snapshot_markdown(user_context, opportunity, recommendations)
+    fallback_summary = {
+        "rows": [
+            {
+                "channel": channel,
+                "channel_label": _channel_label(channel),
+            }
+            for channel in user_context.get("preferred_channels", [])
+        ],
+    }
+    fallback_product_overview = {
+        "active_products": [],
+        "yesterday_active_products": [],
+        "main_products": [opportunity.get("category")] if _is_user_visible(opportunity.get("category")) else [],
+    }
+    markdown = _build_shop_daily_report_markdown(
+        fallback_summary,
+        opportunity,
+        fallback_product_overview,
+        recommendations,
+    )
 
     dominant_channel = user_context.get("preferred_channels", [""])
     return {
@@ -1690,7 +2060,7 @@ def _build_fallback_result(opportunities_timeout: int = 20, fallback_reason: str
             "user_context": user_context,
             "summary": {
                 "total_gmv": None,
-                "structure": "基于最近搜索与实时商机生成的选品策略",
+                "structure": "基于搜索记录与实时商机生成的选品策略",
                 "concentration_pct": 0,
                 "dominant_channel": dominant_channel[0] if dominant_channel else "",
                 "fastest_channel": "",
@@ -1753,7 +2123,7 @@ def fetch_shop_daily(timeout: int = 25) -> Dict[str, Any]:
     )
     recommendations = _build_query_recommendations(summary, opportunity)
     analysis_payload = _build_analysis_payload(summary, opportunity, product_overview)
-    markdown = _build_snapshot_markdown(summary, opportunity, product_overview)
+    markdown = _build_shop_daily_report_markdown(summary, opportunity, product_overview, recommendations)
 
     data = {
         "raw": biz_data,
