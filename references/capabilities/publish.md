@@ -30,7 +30,7 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
 
 | 用户意图 | Agent 操作 |
 |---------|-----------|
-| "全部铺货" / "铺这批" | 用 `--data-id`（明确意图，铺整批20个商品） |
+| "全部铺货" | 用 `--data-id`（明确意图，铺该批搜索结果；单次最多提交前 20 个商品） |
 | "铺第 1、3 个" / "铺 xxx 这个" / "铺你推荐的几个"  | 从 search 输出的 `data.products[]` 中按序号或ID提取或按agent推荐的提取部分商品ID，用 `--item-ids` |
 | 直接给了商品 ID | 用 `--item-ids` |
 | 没有商品来源 | 先执行 `search` |
@@ -99,7 +99,8 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
    └─ 仅当目标不唯一（多个候选）时追问一次
 
 3. 执行 dry-run 预检查（必须）
-   └─ 运行 cli.py publish --shop-code CODE --data-id ID --dry-run
+   └─ 若商品通过 data_id 指定：运行 cli.py publish --shop-code CODE --data-id ID --dry-run
+   └─ 若商品通过 item_ids 指定：运行 cli.py publish --shop-code CODE --item-ids "a,b" --dry-run
    └─ 展示预检结果；仅在目标不唯一时展示 confirm_prompt
 
 4. 目标判定
@@ -107,7 +108,8 @@ python3 {baseDir}/cli.py publish --shop-code "260391138" --data-id "20260305_143
    └─ 目标不唯一 → 追问一次，用户选定后执行
 
 5. 执行正式铺货
-   └─ 运行 cli.py publish --shop-code CODE --data-id ID
+   └─ 若商品通过 data_id 指定：运行 cli.py publish --shop-code CODE --data-id ID
+   └─ 若商品通过 item_ids 指定：运行 cli.py publish --shop-code CODE --item-ids "a,b"
 
 6. 展示结果：原样输出 markdown，然后根据结果引导下一步（见下方）
 ```
