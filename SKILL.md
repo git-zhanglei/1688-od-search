@@ -106,5 +106,6 @@ Agent 根据用户意图**直接执行对应命令**，无需每次先执行 `ch
 | 运费模板、定价、加价倍率 | `references/faq/listing-template.md` |
 | 发货超时、中转费、偏远地区 | `references/faq/fulfillment.md` |
 | 退货、仅退款、运费险、售后 | `references/faq/after-sales.md` |
+| 新人开店、开店流程、SOP、从零起步、第一步做什么 | `references/faq/new-merchant-store-sop.md` |
 | 新店破零、服务分、推广 | `references/faq/new-store.md` |
 | 素材审核、白底图、标题优化 | `references/faq/content-compliance.md` |
